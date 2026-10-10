@@ -392,7 +392,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - `[qa]` open → comment, move card Review → QA.
    - Both open → bounce to whichever is older; the other gets picked up later.
    - Clean up worktree, exit.
-3. Read the issue ACs and the raw diff (code + test files) FIRST and write 2–4 hypotheses of your own — what must hold, where it would break. Only then read the PR description, the `[builder] [report]` comment and Tester's handoff, and check each claim like a hypothesis. Spot-check Tester's evidence (one screenshot at least), read CLAUDE.md / AGENTS.md.
+3. Read the issue ACs and the raw diff (code + test files) FIRST and write 2–4 hypotheses of your own — what must hold, where it would break. Only then read the PR description, the `[builder] [report]` comment and Tester's handoff, and check each claim like a hypothesis. Spot-check Tester's evidence (one screenshot at least), read CLAUDE.md / AGENTS.md — **and `review.md` at the repo root when it exists: it is the engineering team's standards gate, and every requirement in it is part of this review.**
 3b. **Prior-report check (review remembers — added 2.5.0).** Load the last Reviewer report on this PR as `prior_report`. One call:
    ```
    gh pr view <PR> --json comments \
@@ -403,7 +403,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - Any `not fixed` → bounce again now: re-open one thread per unfixed finding with its original prefix (`[builder]` → Ready, `[qa]` → QA, both → `[builder]` first), `loop:rebuild-N`, and update the Reviewer report: those rows go to `❌ not fixed`. Skip the fresh pass; it would review code that is about to change.
    - An unfixed **Over-engineering** finding alone does not bounce; carry it into the new report's Findings.
    - All `fixed` / `no longer applies` → continue to step 4 for a fresh pass. Do not re-raise a prior finding marked `no longer applies`.
-4. Review the code (logic, conventions). Review the tests (right thing tested? testable assertions? meaningful coverage?).
+4. Review the code (logic, conventions). Review the tests (right thing tested? testable assertions? meaningful coverage?). **review.md pass (when the file exists):** check the change against every requirement in `review.md` — standards AND its validation-evidence bar. Each unmet requirement is a finding citing the review.md line (code-side → `[builder]`, evidence/test-side → `[qa]`); a skipped test NEVER counts as passing evidence. The Reviewer report carries one line: `review.md: pass` or `review.md: N unmet`.
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
    - Pull `issue-<N>-<slug>` into the review worktree.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
