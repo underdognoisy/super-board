@@ -299,8 +299,10 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
     for the installed version first (super-build → "Docs before outside-tool code").
 3c. **CODE SPEC first (CRB contract).** Investigate read-only and write the per-ticket code
     spec BEFORE changing anything — exactly this markdown, ≤ 600 words:
-    `# CODE SPEC — #<N>` · `## Problem & root cause hypothesis` (what mechanism in THIS code
-    base produces the symptom — cite file paths and line numbers you actually read) ·
+    `# CODE SPEC — #<N>` · first section by card label: `bug` → `## Problem & root cause
+    hypothesis` (what mechanism in THIS code base produces the symptom); `feature` or none →
+    `## Current state & gap` (what the code does today, where the extension point is, what is
+    missing) — either way, cite file paths and line numbers you actually read ·
     `## Affected modules & contracts` · `## Proposed approach` (the concrete change; if a
     one-liner, show it) · `## Acceptance criteria / test plan` · `## Out of scope` ·
     `## Mechanical-fix score & fork recommendation` (files touched · config-vs-logic ·
