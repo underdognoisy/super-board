@@ -231,7 +231,8 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
 1. Worktree off `config.base_branch`.
 2. Branch `issue-<N>-<slug>` from `config.base_branch`.
 3. Docs check (section below) — if the ticket touches a third-party surface, an upgrade, or auth/billing, read the current official docs first.
-4. Implement smallest safe change covering ACs — under the PR size cap (section below).
+3b. **CODE SPEC first (CRB contract)** — `run.md` → Builder (first pass) step 3c: read-only investigation, then the ≤ 600-word per-ticket CODE SPEC (root-cause hypothesis with file:line cites · affected contracts · proposed approach · test plan · out of scope · mechanical-fix verdict) posted as a `[builder] [spec]` issue comment BEFORE any change. Verdict **dev-led** → card to Blocked 🙋, a developer takes it from the spec. Verdict **agent-fix** → build from the spec.
+4. Implement the spec's Proposed approach as the smallest safe change covering ACs — under the PR size cap (section below).
 5. Commit + push (always).
 6. Open **draft PR** with the PR description template from `run.md` — title in commit-subject format, every marker block filled, `Docs:` bullets in Solution.
 7. Follow [PR author notes](../super-board/references/pr-author-notes.md), then post the `[builder] [report]` PR comment + the short issue comment with the PR URL (writing-standard.md § 4).

@@ -297,7 +297,22 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 3. Read issue body + ALL comments + PROJECT.md.
 3b. Touches a third-party API/SDK, an upgrade, or auth/billing? Read the current official docs
     for the installed version first (super-build → "Docs before outside-tool code").
-4. Implement smallest safe change covering ACs, under the PR size cap
+3c. **CODE SPEC first (CRB contract).** Investigate read-only and write the per-ticket code
+    spec BEFORE changing anything — exactly this markdown, ≤ 600 words:
+    `# CODE SPEC — #<N>` · `## Problem & root cause hypothesis` (what mechanism in THIS code
+    base produces the symptom — cite file paths and line numbers you actually read) ·
+    `## Affected modules & contracts` · `## Proposed approach` (the concrete change; if a
+    one-liner, show it) · `## Acceptance criteria / test plan` · `## Out of scope` ·
+    `## Mechanical-fix score & fork recommendation` (files touched · config-vs-logic ·
+    contract check · testable · verdict: **agent-fix** or **dev-led**, one sentence why).
+    Ground rules: cite only code you actually opened; if you cannot find the mechanism, say
+    exactly where you looked and what's missing — never invent. Post the spec as an issue
+    comment headed `[builder] [spec]` (the card's visible trace).
+    Verdict **dev-led** → stop: move the card to Blocked 🙋 (block-template; the spec comment
+    is the evidence) — a developer takes it from the spec. Verdict **agent-fix** → step 4.
+4. Implement the spec's Proposed approach as the smallest safe change covering ACs (the spec's
+   test plan merges into the AC test plan; the PR body's Solution block links the spec
+   comment), under the PR size cap
    (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
    push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
    move the card to Blocked `❓` — never push on past the cap (super-build → "Keep each PR small").
