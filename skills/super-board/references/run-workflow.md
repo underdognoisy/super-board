@@ -169,13 +169,23 @@ Repeat until a done condition or halt gate fires:
    cut off mid-lane. The legacy `claude-p` dispatcher does not run this guard.
 2. **Plan the wave** —
    `bash .claude/bin/super-board-wave-plan.sh --config <config-path>` →
-   The planner returns `cards`, `sweep`, `resume`, `refreshApproval`, `flag` and `stranded`. **Act on
-   `sweep`, `resume`, `refreshApproval`, `flag` and `stranded` BEFORE launching** (run.md → "The wave-start
+   The planner returns `cards`, `sweep`, `resume`, `changes`, `refreshApproval`, `flag` and `stranded`. **Act on
+   `sweep`, `resume`, `changes`, `refreshApproval`, `flag` and `stranded` BEFORE launching** (run.md → "The wave-start
    sweep"): move every swept card to `Ready` with a comment naming what cleared
    it, move every `resume` card (verified human approval of the current pinned
    request) to `Review`; `needs-you:done` is display-only. Move `refreshApproval`
    cards to `Review` solely to review the changed head and post a fresh human request;
    clear their stale `needs-you:done` display labels. They have no approval to merge.
+
+   **`changes` cards — a trusted human commented `changes: …` after the pinned request.**
+   For each: move Blocked → `Ready`, add `loop:rebuild-N`, remove the `needs-you` label, and
+   comment `[orchestrator] [report] 🔁 changes requested by <login>` / `Did: relayed the human's
+   points below for the rebuild` / a verbatim quote of the `changes:` note / `Next: builder`.
+   The Builder treats each point as an unresolved `[builder]` finding on the same branch
+   (run.md → Builder rebuild); QA re-runs; the Reviewer verifies each point and the merge gate
+   posts a FRESH pinned request on the new head. A `done` after a `changes:` comment never
+   revives the old request — approval restarts at the fresh request. (The GitHub
+   "Request changes" PR review is NOT yet a trigger; the `changes:` issue comment is.)
    Comment on flagged cards asking for their
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
@@ -245,7 +255,7 @@ Repeat until a done condition or halt gate fires:
 
    ```
    Wave 3 · 5 cards → 2 merged · 1 bounced · 1 blocked · 1 failed · usage 5h 62%
-     🛡 #15 Blocked 🔐 missing STRIPE_TEST_KEY — owner: Eric
+     🛡 #15 Blocked 🔐 missing STRIPE_TEST_KEY — owner: <repo-owner>
      ❌ #18 failed: build lane returned no result — retried next wave
    Next: wave 4 (3 cards)   |   ⏸ paused until 14:05   |   ✅ board drained
    ```

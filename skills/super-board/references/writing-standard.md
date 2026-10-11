@@ -113,7 +113,7 @@ Each block closes with `<!-- /sb:<name> -->`.
 |---|---|---|
 | building, in QA, in review | `> [!NOTE]` | `⏳ In review · round 1 · ✅ 2/3 AC · Closes #790 · head \`3f9c2a1\`` |
 | merged | `> [!TIP]` | `✅ Merged · \`9c41e07\`` |
-| blocked, red check | `> [!WARNING]` | `🛑 Blocked · needs Eric` |
+| blocked, red check | `> [!WARNING]` | `🛑 Blocked · needs <repo-owner>` |
 
 A partial PR writes `Refs #N`, never `Closes #N`.
 
@@ -151,7 +151,7 @@ and the proof line says why in one line.
 - [x] No request over 10 MB\
   ↳ spec asserts 0 calls · HAR in `runs/issue-790-qa-v2/`
 - [ ] No new Sentry events after deploy\
-  ↳ not verified: needs prod deploy · Eric
+  ↳ not verified: needs prod deploy · <repo-owner>
 ```
 
 **Iteration history** — local time from config `timezone` (onboard sets it to the machine's
@@ -312,7 +312,7 @@ Next: <owner>
 | role (who writes it) | `builder` · `qa` · `reviewer` · `collect` · `orchestrator` |
 | label | `blocker` · `issue` · `suggestion` · `nit` · `question` · `praise` · `report` |
 | status emoji | ✅ pass/done · ❌ fail · ⏳ in progress · 🛑 blocked · 🙋 needs you · ↩️ moved back · ⚠️ warning |
-| Next | `builder` · `qa` · `reviewer` · `Eric` · `none` |
+| Next | `builder` · `qa` · `reviewer` · `<repo-owner login>` · `none` |
 
 Header regex: `^\[(builder|qa|reviewer|collect|orchestrator)\] \[(blocker|issue|suggestion|nit|question|praise|report)\] \S`
 

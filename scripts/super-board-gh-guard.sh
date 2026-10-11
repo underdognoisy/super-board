@@ -22,7 +22,11 @@ SB_GH_GUARD_BUDGET_DEFAULT=150     # per-worker soft cap on gh calls
 SB_GH_GUARD_SUBAGENT_BUDGET=50     # per adversarial-mode sub-agent cap
 SB_GH_GUARD_STATE_FILE="${SB_GH_GUARD_STATE_FILE:-${TMPDIR:-/tmp}/super-board-gh-budget-$$}"
 
-SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+# BASH_SOURCE is empty when this file is sourced from zsh/sh (observed 2026-10-11:
+# the guard then looked for the reader in the repo root and exited 2, leaving the
+# rate guard blind). Fall back to the installed .claude/bin location.
+SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd)/super-board-github-read.py"
+[ -f "$SB_GITHUB_READ" ] || SB_GITHUB_READ="$(pwd)/.claude/bin/super-board-github-read.py"
 sb_gh_required_read() { local kind="$1"; shift; python3 "$SB_GITHUB_READ" --kind "$kind" -- "$@"; }
 sb_gh_halt_check() { python3 "$SB_GITHUB_READ" --check; }
 

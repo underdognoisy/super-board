@@ -228,7 +228,7 @@ JSON
 CFG="$WORK/books.json"
 echo '{"project":{"owner":"eric","number":2},"repo":{"remote":"https://github.com/eric/books.git"},"_qa_all":true}' > "$CFG"
 OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --root "$WORK/board8" --config "$CFG")
-echo "$OUT" | q '.added_columns == ["Backlog","Building"] and .labels_created == ["qa","feature"]' || fail "columns/labels wrong: $OUT"
+echo "$OUT" | q '.added_columns == ["Backlog","Building"] and .labels_created == ["qa","feature","needs-you"]' || fail "columns/labels wrong: $OUT"
 echo "$OUT" | q '.labels_mapped == 1 and .qa_labelled == 1 and .skipped_moved == 1 and .skipped_removed == true' \
   || fail "mapping / qa-all / Skipped counts wrong: $OUT"
 grep -q -- "issue edit 2 --repo eric/books --add-label feature --remove-label build" "$GH_LOG" || fail "build should map to feature"
@@ -244,7 +244,7 @@ q 'has("_qa_all") | not' "$CFG" || fail "the qa-all marker is dropped once appli
 
 # 9 — a brand-new board: --prune-empty swaps GitHub's default Todo / In Progress for the seven.
 cat > "$GH_STATE" <<'JSON'
-{"projects":[],"labels":["qa","bug","feature"],
+{"projects":[],"labels":["qa","bug","feature","needs-you"],
  "options":{"2":[{"id":"t","name":"Todo","color":"GRAY","description":""},{"id":"p","name":"In Progress","color":"YELLOW","description":""},
                  {"id":"d","name":"Done","color":"GREEN","description":""}]},"items":[]}
 JSON
@@ -257,7 +257,7 @@ echo "$OUT" | q '.labels_created == []' || fail "existing labels are not created
 #      EVERY card's status (as GitHub does), and the restore must still run — it used to
 #      run only for added columns or Skipped, so 114 cards fell to "No status".
 cat > "$GH_STATE" <<'JSON'
-{"projects":[],"labels":["qa","bug","feature"],"wipe_all":true,
+{"projects":[],"labels":["qa","bug","feature","needs-you"],"wipe_all":true,
  "options":{"2":[{"id":"k","name":"Backlog","color":"GRAY","description":""},{"id":"r","name":"Ready","color":"BLUE","description":""},
                  {"id":"u","name":"Building","color":"YELLOW","description":""},{"id":"q","name":"QA","color":"ORANGE","description":""},
                  {"id":"v","name":"Review","color":"PURPLE","description":""},{"id":"b","name":"Blocked","color":"RED","description":""},

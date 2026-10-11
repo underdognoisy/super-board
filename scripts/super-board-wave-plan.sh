@@ -69,6 +69,7 @@
 #   { "cards": [ {"number":10,"status":"Review","title":"…","lane":"review","labels":[]} ],
 #     "sweep": [ {"number":37,"title":"…","clearedBy":[32]} ],
 #     "resume": [ {"number":51,"title":"…"} ],
+#     "changes": [ {"number":53,"title":"…","by":"<login>","note":"…"} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ] }
@@ -173,11 +174,22 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                    clearedBy: (dep(.number) | .blockers) } ],
 
       # Verified current-head human approval from the dependency helper. The
-      # Reviewer independently rechecks it; labels are only UI state.
+      # Reviewer independently rechecks it; labels are only UI state. A standing
+      # human change request always excludes a card from resume.
       resume: [ $all[]
                 | select(.status == "Blocked")
                 | select(dep(.number) != null and (dep(.number).needsYouDone // false))
+                | select((dep(.number).changesRequested // null) == null)
                 | { number, title } ],
+
+      # A trusted human commented `changes: …` after the pinned request. The
+      # orchestrator bounces these to Ready (rebuild) and relays the points.
+      changes: [ $all[]
+                 | select(.status == "Blocked")
+                 | select(dep(.number) != null and (dep(.number).changesRequested // null) != null)
+                 | { number, title,
+                     by: dep(.number).changesRequested.by,
+                     note: dep(.number).changesRequested.note } ],
 
       # Changed code while Blocked needs a new review/request, never approval.
       refreshApproval: [ $all[]

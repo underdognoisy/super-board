@@ -160,9 +160,52 @@ class GitHubTests(unittest.TestCase):
     def test_unlinked_issue_cannot_supply_approval(self):
         self.assertFalse(self.github.check(9, HEAD, REQUEST["scope"], issue=77)["approved"])
 
+    def test_body_closing_keyword_links_issue_when_graphql_list_is_empty(self):
+        # Non-default base branches get an empty closingIssuesReferences; the PR
+        # body's own `Closes #N` must still link the card so its approval is read.
+        pr = self.pr_page["data"]["repository"]["pullRequest"]
+        pr["closingIssuesReferences"]["nodes"] = []
+        pr["body"] = "status card\n\nCloses #3. Also fixes other/repo#8."
+        self.assertTrue(self.github.check(9, HEAD, REQUEST["scope"], issue=3)["approved"])
+        self.assertTrue(any("/issues/3/" in c[-1] for c in self.calls))
+        self.assertFalse(any("/issues/8/" in c[-1] for c in self.calls))
+
+    def test_cross_repo_body_reference_does_not_link(self):
+        pr = self.pr_page["data"]["repository"]["pullRequest"]
+        pr["closingIssuesReferences"]["nodes"] = []
+        pr["body"] = "Closes other/repo#3"
+        self.assertFalse(self.github.check(9, HEAD, REQUEST["scope"], issue=3)["approved"])
+
     def test_unreadable_permission_never_approves(self):
         self.permission_error = True
         self.assertFalse(self.github.check(9, HEAD, REQUEST["scope"])["approved"])
+
+
+class ChangesRequestTests(unittest.TestCase):
+    def permission(self, login):
+        return {"owner": "admin", "reader": "read"}.get(login)
+
+    def request_time(self):
+        return approval.timestamp(evidence()[0]["created_at"])
+
+    def test_trusted_changes_after_request_is_detected(self):
+        comments = evidence() + [comment("changes: tighten the help wording", 5)]
+        found = approval.changes_request(comments, self.request_time(), self.permission)
+        self.assertEqual(found["by"], "owner")
+        self.assertEqual(found["note"], "tighten the help wording")
+
+    def test_untrusted_edited_or_early_changes_are_ignored(self):
+        early = comment("changes: too early", 0)
+        untrusted = comment("changes: not yours", 6, login="reader")
+        edited = comment("changes: edited later", 7)
+        edited["updated_at"] = "2026-10-03T00:00:59Z"
+        comments = evidence() + [early, untrusted, edited]
+        self.assertIsNone(approval.changes_request(comments, self.request_time(), self.permission))
+
+    def test_newest_trusted_changes_wins(self):
+        comments = evidence() + [comment("changes: first", 5), comment("changes: second", 8)]
+        found = approval.changes_request(comments, self.request_time(), self.permission)
+        self.assertEqual(found["note"], "second")
 
 
 class DependencyIntegrationTests(unittest.TestCase):

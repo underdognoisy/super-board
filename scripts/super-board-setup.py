@@ -63,6 +63,13 @@ LABELS = {
     "bug": ("d73a4a", "Something is broken; built, tested, reviewed (super-board)"),
     "feature": ("1d76db", "New behaviour; built, tested, reviewed (super-board)"),
 }
+# UI-state labels, created at onboard like the type labels but NEVER part of the
+# type-routing set (a card with only needs-you is still untyped). needs-you is
+# what the merge gate puts on 🙋 human-gated cards; creating it here means the
+# Reviewer never has to create it mid-run (observed 2026-10-11).
+UI_LABELS = {
+    "needs-you": ("b60205", "Waiting on a human: merge, done, or changes: (super-board)"),
+}
 # Type labels from older packs and common trackers → the three v3 labels.
 OLD_LABELS = {
     "build": "feature", "type:feature": "feature", "kind:feature": "feature", "enhancement": "feature",
@@ -802,7 +809,7 @@ def prepare_migration(binding, url, qa_all, prune_empty):
         if before != issue['want'] and issue['repo'].lower() != binding['repo'].lower():
             raise RuntimeError('Board has an issue from another repository needing label conversion; migrate it in its own repository first')
     labels = repository_labels(binding['repo'])
-    result['labels_created'] = [n for n in LABELS if n not in {s.lower() for s in labels}]
+    result['labels_created'] = [n for n in {**LABELS, **UI_LABELS} if n not in {s.lower() for s in labels}]
     return {'version': 1, 'qa_all': qa_all, 'prune_empty': prune_empty, 'binding': binding, 'field': field['id'], 'options': opts, 'desired': desired,
             'items': items, 'result': result, 'options_started': False, 'options_done': False,
             'labels_done': [], 'statuses_done': [], 'complete': False}
@@ -823,7 +830,7 @@ def resume_migration(saved, path):
     repo, pid, fid = saved['binding']['repo'], saved['binding']['project'], saved['field']
     checkpoint = lambda: save_recovery(path, saved)
     # Reconcile first; a lost response never causes a blind create/edit replay.
-    for name, (color, desc) in LABELS.items():
+    for name, (color, desc) in {**LABELS, **UI_LABELS}.items():
         if name not in {s.lower() for s in repository_labels(repo)}:
             run(['gh', 'label', 'create', name, '--repo', repo, '--color', color, '--description', desc])
             if name not in {s.lower() for s in repository_labels(repo)}:

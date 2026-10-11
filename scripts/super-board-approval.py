@@ -25,6 +25,13 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 SCOPE = re.compile(r"[0-9a-f]{64}\Z")
 BLOCK = re.compile(r"Reason tag:[^\n]*🙋|^approval-request:", re.M)
 DONE = re.compile(r"\s*done[.!]?\s*\Z", re.I)
+CHANGES = re.compile(r"\s*changes\s*:\s*(\S.*)\Z", re.I | re.S)
+# GitHub populates closingIssuesReferences only for PRs into the default branch.
+# Boards whose base_branch is staging (the recommended setup) get an empty list, so
+# the card's own `Closes #N` line must link the issue too. Same-repo refs only; this
+# widens which comment threads are SCANNED, never who may authorize (validate() still
+# requires a trusted collaborator's pinned request matching this PR and head).
+CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#(\d+)", re.I)
 
 
 def scope_for(plan):
@@ -65,6 +72,31 @@ def timestamp(value):
     if result.tzinfo is None:
         raise ValueError("comment timestamp lacks timezone")
     return result
+
+
+def changes_request(comments, request_time, permission):
+    """The newest trusted, unedited `changes: …` comment after the pinned request.
+
+    A standing change request supersedes a `done` for the rest of that request
+    cycle: approval after `changes:` needs the bounce to land and a FRESH pinned
+    request on the new head. Conservative on purpose — the board must never
+    merge against an open human change request.
+    """
+    newest = None
+    for comment in comments:
+        match = CHANGES.fullmatch(comment.get("body") or "")
+        if not match or not comment.get("id"):
+            continue
+        created = timestamp(comment.get("created_at"))
+        if created <= request_time or timestamp(comment.get("updated_at")) != created:
+            continue
+        author = comment.get("user") or {}
+        if (author.get("type") == "User" and author.get("login")
+                and permission(author["login"]) in ("write", "maintain", "admin")):
+            if newest is None or created > newest["time"]:
+                newest = {"time": created, "by": author["login"],
+                          "note": match.group(1).strip()[:2000], "id": comment.get("id")}
+    return newest
 
 
 def trusted_blocks(comments, permission):
@@ -160,7 +192,7 @@ class GitHub:
         # Paginate linked issues too: an omitted newer request must never make
         # an older approval authoritative. Remote-repository links are ignored.
         query = '''query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
-          repository(owner:$owner,name:$repo){pullRequest(number:$pr){headRefOid state
+          repository(owner:$owner,name:$repo){pullRequest(number:$pr){headRefOid state body
             closingIssuesReferences(first:100,after:$endCursor){
               pageInfo{hasNextPage endCursor} nodes{number repository{nameWithOwner}}
             }}}}'''
@@ -181,6 +213,9 @@ class GitHub:
             for issue in links["nodes"]:
                 if issue["repository"]["nameWithOwner"].lower() == self.repo:
                     issues.add(issue["number"])
+            for repo_ref, number in CLOSES.findall(pr.get("body") or ""):
+                if not repo_ref or repo_ref.lower() == self.repo:
+                    issues.add(int(number))
         if links["pageInfo"]["hasNextPage"] or len(heads) != 1:
             raise ValueError("PR changed or issue links are incomplete")
         head = heads.pop()
@@ -223,6 +258,7 @@ def main():
         for entry in graph.values():
             entry["needsYouDone"] = False
             entry["approvalRefresh"] = False
+            entry["changesRequested"] = None
             if not entry.get("needsYou") or github is None:
                 continue
             try:
@@ -236,6 +272,11 @@ def main():
                 entry["needsYouDone"] = result["approved"]
                 entry["approvalRefresh"] = result.get("headChanged", False)
                 entry["approvalWhy"] = result["why"]
+                change = changes_request(comments, timestamp(latest.get("created_at")), github.permission)
+                if change is not None:
+                    entry["needsYouDone"] = False
+                    entry["changesRequested"] = {"by": change["by"], "note": change["note"]}
+                    entry["approvalWhy"] = "human requested changes; bounce, rebuild, fresh request"
             except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
                 entry["approvalWhy"] = "approval evidence could not be verified"
         print(json.dumps(graph))

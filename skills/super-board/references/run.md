@@ -50,6 +50,12 @@ Progress: ✅ onboard  →  ✅ lint  →  🤖 run (you are here)
 
 ## Preconditions (verified before any worker dispatches)
 
+**Start a run with ONLY `/super-board run <slug>` as the triggering message.** The Workflow
+harness relays that message to every agent with override authority; anything beyond the bare
+command risks hijacking a lane (a long launch brief once made the Classify agent role-play it
+and declare a false halt). Runner instructions travel in files, never in the launch message.
+The agent prompts carry a guard line, but the rule stands.
+
 | Check | Action on fail |
 |---|---|
 | Active config exists | Halt: "Run `super-board onboard` first." |
@@ -275,7 +281,7 @@ The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanic
 | Verdict | Action | Block template (`block-template.md`) |
 |---|---|---|
 | `proceed` | nothing; the Builder starts | — |
-| `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
+| `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: <repo-owner login> (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
 | `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" · suggests splitting with `/to-tickets` into vertical slices, each under the cap · `blocked-by: -` |
@@ -332,6 +338,9 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 3. For each unresolved `[builder]` thread: read file:line + suggested fix, apply, resolve thread via graphql mutation.
 4. Address any new failure feedback from Tester's latest `❌` comment.
    (A Reviewer bounce reaches you as those same `[builder]` threads, listed in the latest `<!-- super-review:report -->` comment. A finding the Reviewer re-opened as `not fixed` was resolved without a fix last time — fix the code, not just the thread.)
+4b. A human `changes:` request relayed by the orchestrator (`[orchestrator] [report] 🔁 changes
+    requested by …` on the issue) counts as unresolved `[builder]` findings: address every
+    point in it on the same branch, and say point-by-point what you did in your handoff.
 5. Commit + push to same branch.
 6. Verify ALL `[builder]` threads are resolved. If not, return to step 3.
 7. Refresh [PR author notes](pr-author-notes.md), rewrite `status`, `solution`, `history` blocks; post `[builder] [report]` PR + issue comments. Move Building → QA. Clean up worktree.
@@ -345,6 +354,11 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 4. Build issue-scoped test plan: one observable test per AC.
 4b. **Test-gap check** (super-qa → "Test-gap check (after build)"): map every AC to unit / component / e2e tests, hunt edge cases, write the High gaps red-first. A High gap that needs app code changed → Fail (step 7) with the gap list. Medium/Low go in the handoff under `Test gaps (not written)`.
 5. Run the tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. For UI/visual ACs, capture screenshots at the standard viewports (1920×1080 desktop, 1024×768 tablet, 375×667 mobile). Commit the screenshots to the issue branch BEFORE writing the comment (the markdown image URLs depend on the files being present on the branch).
+5b. **review.md evidence bar — QA's to run.** When the repo root has `review.md`, run its
+    validation-evidence command set EXACTLY as written there, from the worktree root, and cite
+    every command's exit code in the handoff (one line per command). All must exit 0; a SKIP
+    that exits 0 never counts as a pass. Any red command → Fail (step 7) quoting its output.
+    The Reviewer re-checks this set as a gate on QA — it never substitutes for QA running it.
 6. **Pass** → commit test files + screenshots to same branch + push → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up worktree.
 7. **Fail** → leave failing ACs unchecked with the reason, append a `history` row, rewrite `status` → `[qa] [report] ❌` PR comment with per-AC expected/actual + repro file:line + evidence path + "what fixed should look like" **+ inline screenshot embeds of the broken state** → issue comment with the same inline screenshots (showing what's wrong) → increment rebuild counter → move card QA → Ready (label `loop:rebuild-N`). Clean up worktree.
 
@@ -521,7 +535,7 @@ Every lane writes BOTH on every exit, in the comment format of writing-standard.
 Did: <one line>
 ✅ Done: <what passed or landed, with sha / file:line / command>
 ❌ Not done: <what failed or was skipped, and why>   (omit when nothing)
-Next: <builder | qa | reviewer | Eric | none>
+Next: <builder | qa | reviewer | repo-owner | none>
 ```
 
 - Role = who writes it: `builder` · `qa` · `reviewer` · `collect` · `orchestrator`. Label for a
