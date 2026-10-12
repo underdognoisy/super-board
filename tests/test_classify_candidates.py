@@ -249,6 +249,53 @@ def test_approval_vocab():
     print("test_approval_vocab: PASS (7 approve tokens; 13 non-approvals rejected; lgtm -> classify)")
 
 
+def test_stale_done_notice():
+    # F2 (2026-10-12): a trusted `done` posted BEFORE the pinned request never
+    # approves, and the human is told once instead of being silently ignored.
+    early = c("john", "done", when="21:48:00", cid=70)
+    gate = gate_comment()
+
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([early, gate], approved=False))
+    assert entry["needsYouDone"] is False, "a pre-request done must NEVER approve"
+    assert entry["staleDone"] == {"by": "john", "id": 70, "at": "2026-10-11T21:48:00Z"}, \
+        f"the early done must be reported for a notice, got {entry['staleDone']}"
+
+    # The pure verdict agrees: validate() ignores the early token outright.
+    def validate_with(comments):
+        expected = {"repo": REPO, "pr": 5, "head": HEAD, "scope": SCOPE}
+        return approval.validate([dict(x, source=6) for x in comments], expected, perm)
+    assert validate_with([early, gate])["approved"] is False
+    late = c("john", "done", when="21:51:00", cid=72)
+    assert validate_with([early, gate, late])["approved"] is True, "a done AFTER the request still approves"
+
+    # Once a trusted notice names the id, it is not reported again.
+    notice = c("john", "[reviewer] [report] ⚠️ your `done` at 21:48 came before this request — "
+               "comment `done` again to approve\nstale-done: 70", when="21:50:00", cid=71)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([early, gate, notice]))
+    assert entry["staleDone"] is None, "the notice posts once"
+    # The notice is a machine report: never a classify candidate, never a block.
+    assert approval.classify_candidates([notice], REQUEST_TIME, perm) == []
+    assert not approval.BLOCK.search(notice["body"]), "a notice must never supersede the request"
+
+    # An untrusted ack does not suppress; a bot or untrusted early done is not reported.
+    fake = c("bystander", "stale-done: 70", when="21:50:00", cid=73)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([early, gate, fake]))
+    assert entry["staleDone"] and entry["staleDone"]["id"] == 70
+    for who, kind in (("bystander", "User"), ("octobot", "Bot")):
+        entry = entry6()
+        approval.enrich_entry(entry, StubGitHub([c(who, "done", when="21:48:00", ctype=kind, cid=74), gate]))
+        assert entry["staleDone"] is None, f"{who}/{kind} early done is not a human approval attempt"
+
+    # A post-request token exists → validate owns it, no stale notice.
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([early, gate, late], approved=True))
+    assert entry["staleDone"] is None and entry["needsYouDone"] is True
+    print("test_stale_done_notice: PASS (early done never approves; noticed once; trusted-only)")
+
+
 if __name__ == "__main__":
     test_classify()
     test_changes_per_line()
@@ -258,3 +305,4 @@ if __name__ == "__main__":
     test_human_gate_clear()
     test_classify_holds_resume()
     test_approval_vocab()
+    test_stale_done_notice()

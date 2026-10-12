@@ -47,6 +47,10 @@ MACHINE = re.compile(r"\s*\[[A-Za-z][\w-]*\]\s*\[[A-Za-z][\w-]*\]")
 # classify-candidate comment ids already handled, so they stop re-surfacing
 # every wave. Suppression can only skip a re-handle, never cause a merge.
 ACK = re.compile(r"^[ \t]*classified[ \t]*:[ \t]*([0-9]+(?:[ \t]*,[ \t]*[0-9]+)*)[ \t]*$", re.I | re.M)
+# Orchestrator notice: `stale-done: 12` machine line in a trusted comment names a
+# pre-request `done` the human was already told about, so the notice posts once.
+# Like the ack, it can only suppress a repeat notice — never approve anything.
+STALE_ACK = re.compile(r"^[ \t]*stale-done[ \t]*:[ \t]*([0-9]+(?:[ \t]*,[ \t]*[0-9]+)*)[ \t]*$", re.I | re.M)
 # The newest `blocked-by:` line decides the human gate (same line
 # super-board-deps.sh reads); its own comment says WHY the gate exists.
 GATE_LINE = re.compile(r"^[ \t]*blocked-by[ \t]*:[ \t]*(.*?)[ \t]*$", re.I | re.M)
@@ -219,6 +223,45 @@ def acked_ids(comments, permission):
     return out
 
 
+def stale_done(comments, request_time, permission):
+    """The newest trusted human `done|approve|merge` that PREDATES the pinned request.
+
+    It never counts as approval — validate() only accepts a token AFTER the
+    request — but a human who replied early must be told so, once, instead of
+    being silently ignored (2026-10-12: a `done` 46 s before the request sat
+    unnoticed). Returns None when there is nothing to tell: no early token, a
+    token after the request already exists (validate owns that), or a trusted
+    `stale-done: <id>` notice already named this one. Read-only; it only ever
+    produces a notice, so it can never cause a merge.
+    """
+    noticed = set()
+    newest = None
+    for comment in comments:
+        body = comment.get("body") or ""
+        author = comment.get("user") or {}
+        trusted = bool(author.get("login")) and permission(author["login"]) in ("write", "maintain", "admin")
+        hits = STALE_ACK.findall(author_text(body))
+        if hits and trusted and author.get("type") in ("User", "Bot"):
+            for hit in hits:
+                noticed.update(int(x) for x in re.split(r"[ \t]*,[ \t]*", hit))
+        if not comment.get("id") or not DONE.fullmatch(body):
+            continue
+        if not (trusted and author.get("type") == "User"):
+            continue
+        try:
+            created = timestamp(comment.get("created_at"))
+        except (ValueError, TypeError):
+            continue
+        if created > request_time:
+            return None  # a post-request token exists; validate() decides it
+        if newest is None or created > newest["time"]:
+            newest = {"time": created, "by": author["login"], "id": comment.get("id"),
+                      "at": comment.get("created_at")}
+    if newest is None or newest["id"] in noticed:
+        return None
+    return {"by": newest["by"], "id": newest["id"], "at": newest["at"]}
+
+
 def approval_hold(comments, trusted):
     """True only when the comment that SET the human gate — the newest
     `blocked-by:` line, the same line super-board-deps.sh reads — is the merge
@@ -304,6 +347,7 @@ def enrich_entry(entry, github):
     entry["approvalRefresh"] = False
     entry["changesRequested"] = None
     entry["classify"] = []
+    entry["staleDone"] = None
     if not entry.get("needsYou") or github is None:
         return
     try:
@@ -337,6 +381,10 @@ def enrich_entry(entry, github):
         # Free-text human comments after the request the orchestrator must
         # classify (changes / spinoff / discussion / hold). Never a merge.
         entry["classify"] = classify_candidates(comments, request_time, github.permission)
+        if not entry["needsYouDone"] and change is None:
+            # A `done` the human wrote BEFORE this request: never approval, but
+            # tell them once (planner → `staleDone`, orchestrator posts notice).
+            entry["staleDone"] = stale_done(comments, request_time, github.permission)
         if entry["classify"] and entry["needsYouDone"]:
             # A standing unclassified human comment supersedes a bare `done`:
             # resume holds until the orchestrator classifies and acks it

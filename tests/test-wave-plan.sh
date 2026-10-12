@@ -153,4 +153,74 @@ OUT19=$("$PLAN" --config <(echo "$NOCAP") --items "$ITEMS" --deps <(jq '.["21"].
 echo "$OUT19" | jq -e '[.refreshApproval[].number] == [21]' >/dev/null || fail "stale approval must get a fresh request"
 echo "$OUT19" | jq -e '[.resume[].number, .cards[].number, .sweep[].number] | index(21) == null' >/dev/null || fail "refresh is not permission to merge or build"
 
-echo "PASS: test-wave-plan.sh (19 scenarios)"
+# 20–26 — the Approve column, waits-on and reason labels (v3.1.0). Inline board so
+#     each shape is one card.
+AP_ITEMS=$(jq -n '{items: [
+  {status:"Approve", labels:["needs-you"], content:{type:"Issue", number:30, title:"approved", assignees:[]}},
+  {status:"Approve", content:{type:"Issue", number:31, title:"changes asked", assignees:[]}},
+  {status:"Approve", content:{type:"Issue", number:32, title:"free text", assignees:[]}},
+  {status:"Approve", content:{type:"Issue", number:33, title:"early done", assignees:[]}},
+  {status:"Blocked", labels:["needs-you"], content:{type:"Issue", number:34, title:"legacy gated", assignees:[]}},
+  {status:"Blocked", labels:["blocked:decision"], content:{type:"Issue", number:35, title:"plain blocked", assignees:[]}},
+  {status:"Ready", labels:["waits-on","feature"], content:{type:"Issue", number:40, title:"waits, open", assignees:[]}},
+  {status:"Ready", labels:["waits-on"], content:{type:"Issue", number:41, title:"waits, cleared", assignees:[]}},
+  {status:"Blocked", content:{type:"Issue", number:51, title:"no reason label", assignees:[]}},
+  {status:"Blocked", labels:["blocked:other"], content:{type:"Issue", number:52, title:"swept with label", assignees:[]}},
+  {status:"Approve", content:{type:"Issue", number:53, title:"approve, head moved", assignees:[]}}]}')
+AP_DEPS=$(jq -n '
+  def gate: {parseable:true, humanGated:true, runnable:false, blockers:[], openBlockers:[], needsYou:true,
+             needsYouDone:false, changesRequested:null, classify:[], approvalRefresh:false, staleDone:null};
+  { "30": (gate | .needsYouDone = true),
+    "31": (gate | .changesRequested = {by:"john", note:"rename it"} | .humanGated = false | .runnable = true),
+    "32": (gate | .classify = [{by:"john", id:7, at:"t", body:"also log it"}]),
+    "33": (gate | .staleDone = {by:"john", id:9, at:"2026-10-12T20:59:37Z"}),
+    "34": (gate | .needsYouDone = true),
+    "35": {parseable:true, humanGated:true, runnable:false, blockers:[], openBlockers:[], needsYou:false,
+           needsYouDone:true},
+    "40": {parseable:true, runnable:false, blockers:[12], openBlockers:[12]},
+    "41": {parseable:true, runnable:true, blockers:[12], openBlockers:[]},
+    "51": {parseable:true, humanGated:true, runnable:false, blockers:[], openBlockers:[]},
+    "52": {parseable:true, runnable:true, blockers:[9], openBlockers:[]},
+    "53": (gate | .approvalRefresh = true | .approvalWhy = "PR head changed after review") }')
+OUTA=$("$PLAN" --config <(echo "$NOCAP") --items <(echo "$AP_ITEMS") --deps <(echo "$AP_DEPS"))
+nums() { echo "$OUTA" | jq -c "[.$1[].number] | sort"; }
+
+# 20 — resume reads Approve cards, and still a legacy needs-you card in Blocked.
+#      A plain Blocked card is never an approval route, whatever the graph says.
+[ "$(nums resume)" = "[30,34]" ] || fail "resume must read Approve + legacy Blocked needs-you, got $(nums resume)"
+
+# 21 — changes / classify / refreshApproval read Approve cards.
+[ "$(nums changes)" = "[31]" ]          || fail "changes must read Approve cards, got $(nums changes)"
+[ "$(nums classify)" = "[32]" ]         || fail "classify must read Approve cards, got $(nums classify)"
+[ "$(nums refreshApproval)" = "[53]" ]  || fail "refreshApproval must read Approve cards, got $(nums refreshApproval)"
+
+# 22 — a pre-request done is reported for the notice and is NEVER a resume.
+[ "$(nums staleDone)" = "[33]" ] || fail "an early done must surface in staleDone, got $(nums staleDone)"
+echo "$OUTA" | jq -e '.staleDone[0] | .by == "john" and .id == 9' >/dev/null || fail "staleDone must carry by/id"
+echo "$OUTA" | jq -e '[.resume[].number] | index(33) == null' >/dev/null || fail "an early done must never resume"
+
+# 23 — Approve cards are never dispatched or swept from the planner: only the
+#      verified routes move them, and a runnable changes card goes via `changes`.
+echo "$OUTA" | jq -e '[.cards[].number, .sweep[].number] as $x | [30,31,32,33,53] | all(. as $n | $x | index($n) == null)' >/dev/null \
+  || fail "Approve cards must not be dispatched or swept, got $(echo "$OUTA" | jq -c '{cards,sweep}')"
+
+# 24 — waits-on: not picked while its blocker is open; released (not picked) once
+#      clear, so the label comes off before the card builds.
+echo "$OUTA" | jq -e '[.cards[].number] as $x | [40,41] | all(. as $n | $x | index($n) == null)' >/dev/null \
+  || fail "a waits-on Ready card must never be picked while labelled"
+[ "$(nums release)" = "[41]" ] || fail "only the cleared waits-on card is released, got $(nums release)"
+echo "$OUTA" | jq -e '.release[0].clearedBy == [12]' >/dev/null || fail "release must name what cleared it"
+
+# 25 — once released (label gone, same graph) the card is an ordinary free Ready card.
+OUT25=$("$PLAN" --config <(echo "$NOCAP") \
+  --items <(echo "$AP_ITEMS" | jq '(.items[] | select(.content.number == 41) | .labels) = []') --deps <(echo "$AP_DEPS"))
+echo "$OUT25" | jq -e '[.cards[].number] | index(41) != null' >/dev/null || fail "a released card must be picked next wave"
+echo "$OUT25" | jq -e '[.release[].number] == []' >/dev/null || fail "a released card is not released twice"
+
+# 26 — reason labels: an unlabelled Blocked card is reported (legacy needs-you and
+#      labelled cards are not); a swept card names the reason label to drop.
+[ "$(nums unlabelled)" = "[51]" ] || fail "only #51 lacks a reason label, got $(nums unlabelled)"
+echo "$OUTA" | jq -e '.sweep[] | select(.number == 52) | .removeLabels == ["blocked:other"]' >/dev/null \
+  || fail "sweep must name the reason label to remove, got $(echo "$OUTA" | jq -c .sweep)"
+
+echo "PASS: test-wave-plan.sh (26 scenarios)"

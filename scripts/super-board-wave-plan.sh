@@ -56,6 +56,26 @@
 # "qa-only" is refused (exit 65) until `super-board onboard` upgrades it, because
 # reading it as "full" would start building on a board meant only for testing.
 #
+# THE APPROVE COLUMN (v3.1.0). A card that passed review and waits on a human
+# merge decision (merge gate exit 7 / 8) sits in `Approve`, not Blocked. The
+# approval routes — resume, changes, classify, refreshApproval, staleDone — read
+# Approve cards, plus (backward compatibility) a Blocked card the graph marks
+# `needsYou` (the 🙋 tag or the `needs-you` label) gated before Approve existed.
+# The column only says WHERE to look: approval itself is still the head-bound,
+# trusted-human verdict from super-board-approval.py. Moving a card into Approve
+# by hand grants nothing.
+#
+# WAITS-ON (v3.1.0). Pre-flight's "sequence" outcome no longer parks a card in
+# Blocked: it stays in Ready with the `waits-on` label and a comment carrying
+# `blocked-by: N`. Such a card is never picked while it carries the label. Once
+# the graph says it is free, it is reported in `release`; the orchestrator drops
+# the label (one comment) and the next wave picks it.
+#
+# REASON LABELS (v3.1.0). Every Blocked card carries one `blocked:<reason>`
+# label. `unlabelled` lists Blocked cards with none (legacy, or a lane that
+# skipped it) so the orchestrator can add one from the Block comment's tag.
+# `sweep` carries `removeLabels`: the reason labels to drop on the way to Ready.
+#
 # Usage:
 #   super-board-wave-plan.sh --config <config.json> [--items <project-items.json>]
 #                            [--deps <deps.json>]
@@ -72,6 +92,9 @@
 #     "changes": [ {"number":53,"title":"…","by":"<login>","note":"…"} ],
 #     "classify": [ {"number":54,"title":"…","comments":[{"by":"<login>","id":1,"at":"…","body":"…"}]} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
+#     "staleDone": [ {"number":55,"title":"…","by":"<login>","id":9,"at":"…"} ],
+#     "release": [ {"number":56,"title":"…","clearedBy":[32]} ],
+#     "unlabelled": [ {"number":57,"title":"…"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ] }
 set -euo pipefail
@@ -146,6 +169,13 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
     else "build" end;
   # Unknown to the graph (closed, or beyond the fetch limit) is not "free".
   def free($n): (dep($n) | if . == null then false else .runnable end);
+  # Where the human-approval routes look: the Approve column, and a legacy
+  # 🙋 card still in Blocked. Approval itself is verified by the graph, never
+  # by the column.
+  def gated: .status == "Approve"
+             or (.status == "Blocked" and ((dep(.number).needsYou // false)
+                                           or (.labels | index("needs-you") != null)));
+  def reason_labels: [ .labels[] | select(startswith("blocked:")) ];
 
   [ .items[]
     | select(.content.type == "Issue")
@@ -159,8 +189,10 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   # spends its slots on the work closest to Done.
   | [ $cols[] as $c | $all[] | select(.status == $c and $c != "Ready") ] as $flight
 
-  # Ready: only the ones the graph says are actually free.
-  | [ $all[] | select(.status == "Ready") | select(free(.number)) ] as $ready
+  # Ready: only the ones the graph says are actually free. A `waits-on` card is
+  # never picked while it carries the label — `release` drops it first.
+  | [ $all[] | select(.status == "Ready") | select(free(.number))
+      | select(.labels | index("waits-on") | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.
   | ($flight + $ready) as $picked
@@ -173,13 +205,29 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                | select(free(.number))
                | select((dep(.number).changesRequested // null) == null)
                | { number, title,
-                   clearedBy: (dep(.number) | .blockers) } ],
+                   clearedBy: (dep(.number) | .blockers),
+                   removeLabels: reason_labels } ],
+
+      # Sequenced Ready cards (`waits-on`) whose blockers have all closed. The
+      # orchestrator removes the label and comments once; the next wave picks it.
+      release: [ $all[]
+                 | select(.status == "Ready" and (.labels | index("waits-on")))
+                 | select(free(.number))
+                 | { number, title, clearedBy: (dep(.number) | .blockers) } ],
+
+      # Blocked cards with no `blocked:<reason>` label (and not a legacy 🙋
+      # approval card). The orchestrator labels each from its Block comment tag.
+      unlabelled: [ $all[]
+                    | select(.status == "Blocked")
+                    | select(gated | not)
+                    | select((reason_labels | length) == 0)
+                    | { number, title } ],
 
       # Verified current-head human approval from the dependency helper. The
       # Reviewer independently rechecks it; labels are only UI state. A standing
       # human change request always excludes a card from resume.
       resume: [ $all[]
-                | select(.status == "Blocked")
+                | select(gated)
                 | select(dep(.number) != null and (dep(.number).needsYouDone // false))
                 | select((dep(.number).changesRequested // null) == null)
                 | { number, title } ],
@@ -187,7 +235,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       # A trusted human commented `changes: …` after the pinned request. The
       # orchestrator bounces these to Ready (rebuild) and relays the points.
       changes: [ $all[]
-                 | select(.status == "Blocked")
+                 | select(gated)
                  | select(dep(.number) != null and (dep(.number).changesRequested // null) != null)
                  | { number, title,
                      by: dep(.number).changesRequested.by,
@@ -199,7 +247,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       # deterministic signal already routes the card (changesRequested / resume),
       # so the regex fast paths always win over classification.
       classify: [ $all[]
-                  | select(.status == "Blocked")
+                  | select(gated)
                   | select(dep(.number) != null
                            and ((dep(.number).classify // []) | length) > 0
                            and (dep(.number).changesRequested // null) == null
@@ -208,9 +256,18 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
       # Changed code while Blocked needs a new review/request, never approval.
       refreshApproval: [ $all[]
-                         | select(.status == "Blocked")
+                         | select(gated)
                          | select(dep(.number).approvalRefresh // false)
                          | { number, title, why: dep(.number).approvalWhy } ],
+
+      # A trusted `done` posted BEFORE the current pinned request. Never an
+      # approval; the orchestrator tells the human once (machine line
+      # `stale-done: <id>` dedups the notice).
+      staleDone: [ $all[]
+                   | select(gated)
+                   | select((dep(.number).staleDone // null) != null)
+                   | { number, title, by: dep(.number).staleDone.by,
+                       id: dep(.number).staleDone.id, at: dep(.number).staleDone.at } ],
 
       # Cards the graph could not read. Left where they are, reported so the
       # orchestrator can ask for the line to be fixed.
