@@ -1,5 +1,56 @@
 # Release notes
 
+## v3.3.0 — 2026-10-12
+
+Drag a 🙋 card from **Approve** to **Done** to approve it. A GitHub Project card cannot carry a
+button, so the board gesture is the approval.
+
+- ✨ **Drag to Done = approval.** The wave planner finds a 🙋 card whose Status is `Done` while its
+  issue and PR are still OPEN. It counts as approval under the same rules as a `done` comment: the
+  newest trusted, unedited `approval-request:` covers the PR's current head, and the card reached
+  Done AFTER that request. The planner reports it in `resume` with `via: "drag"`; the orchestrator
+  moves it Done → Review with `[orchestrator] [report] ▶️ approved by drag to Done · back to Review
+  for the merge` and the planner's `drag-approval: {…}` record as the last line; the Reviewer merges
+  through the unchanged merge gate (`--expect-head`). The gate accepts the record only when it names
+  the current request id, head and scope.
+- 🛡️ **A drag never overrides a human.** A standing `changes:` or an unacked free-text comment still
+  blocks resume. If the head moved after the request the drag is void (card → Review for a fresh
+  request). A drag before the request, on an edited or superseded request, or (where GitHub reports
+  it) by a project workflow or an untrusted actor is refused: `dragRefused` sends the card back to
+  Approve with the reason. A Done card whose issue is closed or whose PR merged is never read as an
+  approval.
+- 🐛 **Done no longer always means merged.** Between the drag and the merge a Done card has an OPEN
+  issue. `/super-board status` shows it as `✅ #N title (approved · merging)` instead of in the
+  squash-merged line; the landed-work progress signal and the done conditions skip it. If the merge
+  fails the card leaves Done by the usual gate routing (conflict → Ready `loop:rebase`, GitHub refused
+  → Blocked `blocked:github`, head moved → Review).
+- 📝 **New request line:** "Drag this card to **Done** on the board, or comment `done` here, to
+  approve and merge — or `changes: <what>` to send it back."
+- 🔧 **Labels on every view.** `board-migrate` (and so onboard) turns the Labels field on in every
+  project view that hides it, keeping each view's own fields (`updateProjectV2View`
+  `visibleFieldIds`). `--dry-run` lists the views in `labels_views`.
+- 🔧 `VERSION`, `skills/super-board/VERSION` and the plugin manifest all read 3.3.0. The skill copy
+  and the manifest still said 3.1.1, so every install of 3.2.0 reported itself as 3.1.1 and onboard
+  kept offering the upgrade.
+
+**What GitHub tells us about a drag (checked 2026-10-12, read-only, on a user-owned board).** The
+issue timeline type `ProjectV2ItemStatusChangedEvent` exists in the schema (actor, createdAt,
+previousStatus, status, wasAutomated). On this board it came back EMPTY for every issue, cards that
+were moved included. The Status field value's `updatedAt` is readable and moves with each Status
+change; its `creator` is whoever FIRST set the field, not who moved the card last. So on such a board
+the planner checks WHEN (the Status `updatedAt` must be after the request) but cannot see WHO. When
+GitHub does return the events, the planner uses the newest one: it records the actor and refuses a
+project-workflow move or a non-person actor.
+
+**Trust caveat.** When `notifications.bot_identity` is the owner's own account, a human drag and a
+move made by the robot through the same token look identical on GitHub. The robot never moves an
+unmerged card to Done, so in practice an open-issue Done card is a person's drag, but the board
+cannot prove that. The `drag-approval:` record is the orchestrator saying what the planner read
+from the board. It is not a human act the gate can verify independently. If a drag must be provably
+human, run the board as a separate bot account (`references/second-account.md`) so its moves and
+comments are distinguishable from yours; until then, treat drag approval as owner-convenience, with
+the same trust as the run identity.
+
 ## v3.2.0 — 2026-10-12
 
 `Blocked` stops being a dump for four different states. Board shape: Backlog · Ready · Building ·

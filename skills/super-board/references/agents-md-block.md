@@ -22,7 +22,7 @@ Board: Backlog · Ready · Building · QA · Review · Approve · Blocked · Don
 | Isolation | 1 card · 1 worktree · 1 branch |
 | Merge | auto for normal changes · money, auth, destructive schema (DROP/TRUNCATE/RENAME) → human · PR > 400 changed lines → human |
 | Migrations | additive → robot migrates allowed DBs only · live DB ALWAYS → 🙋 needs you |
-| Approve / Blocked | Approve: 🙋 comment `done` to merge · `changes: <what>` sends back · Blocked: block-template · `blocked-by:` last · one `blocked:<reason>` label |
+| Approve / Blocked | Approve: 🙋 drag to Done or comment `done` to merge · `changes: <what>` sends back · Blocked: block-template · `blocked-by:` last · one `blocked:<reason>` label |
 | Secrets | NEVER read `.env`; key names via `.claude/bin/super-board-env-check.sh` |
 
 ## Writing (super-board)

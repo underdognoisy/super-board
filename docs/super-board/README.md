@@ -33,8 +33,9 @@ flowchart LR
   qa -->|fail| ready
   review -->|bounce| ready
   gate -->|stale or conflicts| ready
-  gate -->|human merges: exit 7 / 8| approve["Approve 🙋<br/>comment done or changes:"]
+  gate -->|human merges: exit 7 / 8| approve["Approve 🙋<br/>drag to Done, comment done, or changes:"]
   approve -->|"trusted done (resume)"| review
+  approve -->|"dragged to Done (resume, via drag)"| review
   approve -->|"changes:"| ready
   gate -->|refused by GitHub| blocked["Blocked<br/>blocked:github"]
   blocked -->|"blockers closed (sweep)"| ready
@@ -65,8 +66,9 @@ live site with no repo is not a board: `/super-qa <url>`. The full screen-by-scr
 `skills/super-board/references/onboard.md`; the deterministic half is
 `scripts/super-board-setup.py`.
 
-**Labels.** Every board has the same eight columns. `Approve` is the human's merge queue (comment
-`done` to approve and merge, or `changes: <what>`); `Blocked` holds only real stops, each with one
+**Labels.** Every board has the same eight columns. `Approve` is the human's merge queue (drag the
+card to **Done**, or comment `done`, to approve and merge — or comment `changes: <what>`; a dragged
+card shows `approved · merging` until the next wave merges it); `Blocked` holds only real stops, each with one
 `blocked:<reason>` label (decision · failed-review · needs-access · github · other); a card that
 must wait for an overlapping card stays in `Ready` with the `waits-on` label. Three labels route a card: `qa` goes Ready →
 QA → Review → Done (test what exists), `bug` and `feature` go through Building first, and a card
@@ -82,7 +84,7 @@ card dropped on purpose is closed as not planned and moved to Done with a 🤷 c
 - Default backend is in-session dynamic workflows: turn them on in `/config`. Headless `claude -p` is opt-in (`worker_backend: "claude-p"`).
 - Set `verify_commands` in the config. Without them the merge gate cannot prove the result builds, and says so.
 - `onboard` fixes what the board needs without asking (skills, scripts, workflows, guards, settings, old folders, config keys) and asks only to install a system tool or sign in. An older super-board is upgraded in place (see [Upgrading from 2.x](../../RELEASE-NOTES.md#upgrading-from-2x)).
-- `onboard` asks once what the robot may do: auto-merge normal changes up to 400 changed lines (money, auth, destructive schema like DROP/TRUNCATE/RENAME, and bigger PRs wait for you; additive migrations run only on the databases you allow, never live), protect main, and which databases it may migrate (default test + staging). Anything only you may run lands in Approve tagged 🙋 with the exact command; comment `done` and the next wave merges.
+- `onboard` asks once what the robot may do: auto-merge normal changes up to 400 changed lines (money, auth, destructive schema like DROP/TRUNCATE/RENAME, and bigger PRs wait for you; additive migrations run only on the databases you allow, never live), protect main, and which databases it may migrate (default test + staging). Anything only you may run lands in Approve tagged 🙋 with the exact command; drag the card to Done (or comment `done`) and the next wave merges.
 - Auto-merge needs the merge-gate and `gh pr merge` lines in your allowlist; `onboard` offers them as a diff.
 - `onboard` can make AGENTS.md the source of truth (CLAUDE.md becomes `@AGENTS.md`) and keeps a managed super-board section in it. Plugin install: the command is `/super-board:super-board onboard`, and its 🔍 Checks step installs the missing scripts, workflows and hooks.
 - Bug sources take any extra source in onboard — a link, app name, API URL, MCP server or command — proven readable (read-only) before it is saved; `/super-collect` runs it like the built-ins.
@@ -226,13 +228,13 @@ to the base branch is opt-in (`onboard` asks once, or `install.sh --protect-main
   ─────────────────────────────────────────    ────────    ─────────────────────────────
   a normal change, verify green                merge (0)   Done
   money / auth / destructive schema (labels,   exit 7      Approve 🙋 — you merge it, or
-    path globs, added-line keywords), or                   comment `done` to approve
+    path globs, added-line keywords), or                   drag to Done / comment `done`
     over auto_max_lines (default 400 changed
     lines: "big PR — please review")
   additive migrations, target env allowed      migrate,    Done
                                                merge (0)
   migrations for live (not allowed), a failed  exit 8      Approve 🙋 — exact commands;
-    migrate command, a `needs-you:` step                   comment `done` → next wave merges
+    migrate command, a `needs-you:` step                   drag to Done / `done` → next wave merges
 ```
 
 In plain words: only **destructive** schema changes (DROP / TRUNCATE / RENAME, or a `schema`
