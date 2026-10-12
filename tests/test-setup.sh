@@ -157,12 +157,24 @@ elif a[:2] == ["api", "graphql"]:
             value = {"items": page([node(it) for it in st["items"]], v.get("after"))}
         elif "... on ProjectV2Item{" in query:
             value = node(next(it for it in st["items"] if it["id"] == v["id"]))
+        elif "views(first:" in query:
+            fields = st.get("fields", [{"id": "F_T", "name": "Title", "dataType": "TITLE"},
+                                       {"id": "F_L", "name": "Labels", "dataType": "LABELS"}])
+            value = {"fields": {"nodes": fields},
+                     "views": {"nodes": [{"id": v["id"], "name": v["name"],
+                                          "fields": {"nodes": [{"id": f} for f in v["fields"]]}}
+                                         for v in st.get("views", [])]}}
         elif "... on Issue{" in query:
             it = next(it for it in st["items"] if "ISS"+str(it["content"]["number"]) == v["id"])
             value = {"labels": page([{"name": n} for n in it.get("labels", [])], v.get("after"))}
         else:
             value = {"options": st["options"]["2"]}
         print(json.dumps({"data": {"node": value}}))
+    elif "updateProjectV2View" in body["query"]:
+        v = body["variables"]
+        view = next(x for x in st["views"] if x["id"] == v["id"])
+        view["fields"] = v["ids"]; save()
+        print(json.dumps({"data": {"updateProjectV2View": {"projectV2View": {"id": v["id"]}}}}))
     else:
         st["gen"] = st.get("gen", 0) + 1
         new = [{"id": f"o{st['gen']}-{i}", "name": o["name"], "color": o["color"], "description": o["description"]}
@@ -297,8 +309,25 @@ cp "$GH_STATE" "$WORK/before.json"; : > "$GH_LOG"; rm -rf "$WORK/dry"; mkdir -p 
 OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --owner eric --number 2 --repo eric/books --prune-empty --qa-all --dry-run --root "$WORK/dry")
 cmp -s "$GH_STATE" "$WORK/before.json" || fail "dry-run changed board state: $(cat "$GH_STATE")"
 ! grep -Eq '^(project item-edit|label create|issue edit)' "$GH_LOG" || fail "dry-run made a write: $(cat "$GH_LOG")"
-[ "$(grep -c '^api graphql' "$GH_LOG")" = 2 ] || fail "dry-run should only read options and the complete card snapshot over GraphQL: $(cat "$GH_LOG")"
+[ "$(grep -c '^api graphql' "$GH_LOG")" = 3 ] || fail "dry-run should only read options, the complete card snapshot and the views over GraphQL: $(cat "$GH_LOG")"
 [ ! -e "$WORK/dry/.claude" ] || fail "dry-run must not write a backup file"
 echo "$OUT" | q '.status_backup == null and .restored == 0 and .added_columns != []' || fail "dry-run report wrong: $OUT"
 
-echo "PASS: test-setup.sh (12 scenarios)"
+# 13 — Labels in every view (v3.3.0, F7): a view that hides Labels gets it appended,
+#      its own visible fields kept in order; a view that shows it is left alone.
+#      --dry-run names the view and writes nothing.
+jq '.views = [{"id":"V1","name":"Board","fields":["F_T","F_S"]},{"id":"V2","name":"Table","fields":["F_T","F_L"]}]
+    | .fields = [{"id":"F_T","name":"Title","dataType":"TITLE"},{"id":"F_S","name":"Status","dataType":"SINGLE_SELECT"},
+                 {"id":"F_L","name":"Labels","dataType":"LABELS"}]' "$GH_STATE" > "$WORK/s" && mv "$WORK/s" "$GH_STATE"
+cp "$GH_STATE" "$WORK/before.json"; : > "$GH_LOG"; rm -rf "$WORK/dry13"; mkdir -p "$WORK/dry13"
+OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --owner eric --number 2 --repo eric/books --dry-run --root "$WORK/dry13")
+cmp -s "$GH_STATE" "$WORK/before.json" || fail "dry-run must not change a view: $(jq -c .views "$GH_STATE")"
+echo "$OUT" | q '.labels_views == ["Board"]' || fail "dry-run must name the view that hides Labels: $OUT"
+OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --owner eric --number 2 --repo eric/books --root "$WORK/board13")
+q '.views == [{"id":"V1","name":"Board","fields":["F_T","F_S","F_L"]},{"id":"V2","name":"Table","fields":["F_T","F_L"]}]' "$GH_STATE" \
+  || fail "Labels must be appended to the hiding view only: $(jq -c .views "$GH_STATE")"
+echo "$OUT" | q '.labels_views == ["Board"]' || fail "the report must name the view it changed: $OUT"
+OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --owner eric --number 2 --repo eric/books --root "$WORK/board13b")
+echo "$OUT" | q '.labels_views == []' || fail "a second run changes no view: $OUT"
+
+echo "PASS: test-setup.sh (13 scenarios)"

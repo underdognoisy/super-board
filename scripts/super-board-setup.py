@@ -32,7 +32,9 @@ command for this OS, for onboard to ask about.
 Status options (--prune-empty also drops unused extras such as a new board's Todo),
 creates the three labels, maps old type labels, labels every card `qa`
 on a board that was "qa-only" (--qa-all), moves Skipped cards to Done, removes the Skipped
-option, and puts back any card status the option rewrite cleared. Before any write it saves
+option, puts back any card status the option rewrite cleared, and (v3.3.0) turns the Labels
+field on in every project view that hides it, keeping each view's visible fields (`--dry-run`
+lists those views in `labels_views` and writes nothing). Before any write it saves
 all cards and conversion intent in .claude/super-board/migrations/ (under --root, the config project root, or cwd).
 Re-run the same command from the same root to recover an interrupted upgrade. Keep the
 board idle during migration: GitHub has no atomic compare-and-swap for field rewrites.
@@ -734,6 +736,52 @@ def migration_lock(path):
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+VIEWS_Q = '''query($id:ID!){node(id:$id){... on ProjectV2{
+fields(first:100){nodes{... on ProjectV2FieldCommon{id name dataType}}}
+views(first:50){nodes{id name fields(first:100){nodes{... on ProjectV2FieldCommon{id name}}}}}}}}'''
+VIEW_M = ('mutation($id:ID!,$ids:[ID!]!){updateProjectV2View(input:{viewId:$id,'
+          'configuration:{visibleFieldIds:$ids}}){projectV2View{id}}}')
+
+
+def views_without_labels(pid):
+    """[(view, visible field ids + Labels)] for each view that hides Labels.
+
+    The mini-card shows labels only when the view shows the Labels field, and
+    the board's routing (`qa`, `waits-on`, `blocked:<reason>`, `needs-you`)
+    lives in labels. Existing visible fields are kept in order; Labels is
+    appended. Read-only.
+    """
+    node = node_query(VIEWS_Q, {'id': pid})
+    fields = [f for f in ((node.get('fields') or {}).get('nodes') or []) if isinstance(f, dict)]
+    labels = next((f['id'] for f in fields if f.get('dataType') == 'LABELS' and f.get('id')), None)
+    if labels is None:
+        return None, []
+    todo = []
+    for view in (node.get('views') or {}).get('nodes') or []:
+        if not isinstance(view, dict) or not view.get('id'):
+            raise RuntimeError('GitHub omitted a project view')
+        visible = [f['id'] for f in ((view.get('fields') or {}).get('nodes') or []) if isinstance(f, dict) and f.get('id')]
+        if labels not in visible:
+            todo.append((view, visible + [labels]))
+    return labels, todo
+
+
+def show_labels_in_views(pid, dry=False):
+    """Turn Labels on in every view; returns the view names it changed (or would)."""
+    labels, todo = views_without_labels(pid)
+    if dry or not todo:
+        return [view.get('name') or view['id'] for view, _ in todo]
+    for view, ids in todo:
+        try:
+            gql(VIEW_M, {'id': view['id'], 'ids': ids})
+        except (RuntimeError, ValueError):
+            pass  # the server may have applied it; only read-back settles this
+    _, left = views_without_labels(pid)
+    if left:
+        raise RuntimeError('Could not verify the Labels field in views: ' + ', '.join(v.get('name') or v['id'] for v, _ in left))
+    return [view.get('name') or view['id'] for view, _ in todo]
+
+
 def board_migrate(owner, number, repo, qa_all=False, dry=False, prune_empty=False, root=None, config_path=None):
     """Save first, reconcile each write, resume an interrupted upgrade without re-snapshotting."""
     proj = gh_json('project', 'view', str(number), '--owner', owner, '--format', 'json')
@@ -744,7 +792,9 @@ def board_migrate(owner, number, repo, qa_all=False, dry=False, prune_empty=Fals
                         hashlib.sha256(pid.encode()).hexdigest()[:24] + '.json')
     binding = {'project': pid, 'owner': owner, 'number': number, 'repo': repo}
     if dry:
-        return prepare_migration(binding, proj['url'], qa_all, prune_empty)['result']
+        result = prepare_migration(binding, proj['url'], qa_all, prune_empty)['result']
+        result['labels_views'] = show_labels_in_views(pid, dry=True)
+        return result
     try:
         with migration_lock(path):
             saved = load_json(path)
@@ -760,6 +810,7 @@ def board_migrate(owner, number, repo, qa_all=False, dry=False, prune_empty=Fals
                 save_recovery(path, saved)  # no GitHub mutation has occurred
             saved['result']['recovery_file'] = path
             resume_migration(saved, path)
+            saved['result']['labels_views'] = show_labels_in_views(pid)
             if config_path:
                 current = load_json(config_path)
                 if not isinstance(current, dict):
