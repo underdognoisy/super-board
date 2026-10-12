@@ -450,7 +450,10 @@ def enrich_entry(entry, github):
         if request is None or request["repo"] != github.repo:
             return
         try:
-            result = github.check(request["pr"], head=request["head"], issue=entry["number"], drag=True)
+            # The drag route needs a board (`--project`); without one, check() is
+            # called exactly as before v3.3.0.
+            extra = {"drag": True} if getattr(github, "project", None) else {}
+            result = github.check(request["pr"], head=request["head"], issue=entry["number"], **extra)
         except PRNotOpen as closed:
             # A merged or closed PR is never an approval — and a Done card whose
             # PR merged is not a drag waiting to be refused (prState says so).
