@@ -108,6 +108,9 @@ mode:   <auto-merge|human-approves>        truth gate: <off|non-trivial (≥N)|a
 ┌─ Review   [N] ───────────────────────────────────────────────────────────────┐
 │ <card lines>                                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
+┌─ Approve  [N] ───────────────────────────────────────────────────────────────┐
+│ 🙋 <card lines — waiting on a human merge decision>                          │
+└──────────────────────────────────────────────────────────────────────────────┘
 ┌─ Blocked  [N] ───────────────────────────────────────────────────────────────┐
 │ <card lines with reason glyph>                                               │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -152,6 +155,9 @@ mode:   auto-merge                 truth gate: non-trivial (≥70)
 ┌─ Review   [0] ───────────────────────────────────────────────────────────────┐
 │ (empty)                                                                      │
 └──────────────────────────────────────────────────────────────────────────────┘
+┌─ Approve  [0] ───────────────────────────────────────────────────────────────┐
+│ (empty)                                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
 ┌─ Blocked  [1] ───────────────────────────────────────────────────────────────┐
 │ 🛡 #25  Add Controle page — gated on #24                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -192,7 +198,7 @@ mode:   auto-merge                 truth gate: non-trivial (≥70)
 1. Header line (project + `#number`)
 2. Separator (80 × `─`)
 3. Config strip (2 lines: `config/labels/base`, `mode/truth-gate`)
-4. Kanban — 7 boxes in board order, left to right as on GitHub: Backlog · Ready · Building · QA · Review · Blocked · Done (`BOARD_ORDER` in the script; there is no Skipped column since v3.0.0)
+4. Kanban — 8 boxes in board order, left to right as on GitHub: Backlog · Ready · Building · QA · Review · Approve · Blocked · Done (`BOARD_ORDER` in the script; there is no Skipped column since v3.0.0; Approve since v3.2.0)
 5. `▎Workers`
 6. `▎Block reasons`
 7. `▎Recent`
@@ -223,6 +229,8 @@ Inside a Kanban box, one line per issue:
 - **suffix** (right-justified):
   - In-flight rebuild: `↻ N/3` (from `loop:rebuild-N` label)
   - Blocked: `— <reason glyph> <short reason>` or `— gated on #N`
+- **Approve** cards print `🙋` as their glyph (a human merge decision: comment `done` or `changes:`).
+- A **Ready** card labelled `waits-on` prints `⏳` and the suffix `(waits-on)` — sequenced, not dispatched.
   - Otherwise: empty
 
 ### §D — Backlog and Done collapsing

@@ -323,7 +323,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    - **Over-engineering only** (from `ponytail:ponytail-review`, see super-review step 3) → list it in the report, open no thread, and carry on to the merge decision; it never bounces a card alone. When the card bounces for another finding anyway, open a `[builder]` thread for each Over-engineering finding too, so the rebuild trims it.
    - **Code-side new finding** → new `[builder]`-prefixed thread, move card Review → Ready (`loop:rebuild-N`).
    - **Test-side new finding** → new `[qa]`-prefixed thread, move card Review → QA (`loop:rebuild-N`).
-   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked. A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Blocked).
+   - **Blocker finding (destructive schema, contract, money, auth, live-DB migration) or rebuild cap hit** → full §4 Block template, move card Review → Blocked with one `blocked:<reason>` label (`blocked:failed-review` for the rebuild cap, `blocked:decision` otherwise). A *clean* PR that merely touches money, auth or schema is not a finding: run the merge protocol, and the gate's `merge_policy` hands it to a human (exit 7 → 🙋 Approve).
 8. Write the Reviewer report (marker `<!-- super-review:report -->`, ids on every finding) — edit the existing report comment in place, post a new one only on the first review. It is the next re-review's `prior_report`.
 9. Clean up worktree.
 
@@ -346,18 +346,24 @@ two complete builds. In order, no shortcuts:
      path or added-line keyword; a diff over `auto_max_lines`, default 400 — "big PR — please
      review"; `default: "human"`). `schema` means destructive only (DROP / TRUNCATE / RENAME);
      an additive migration follows `migrations.allowed_envs`, and a live DB is always human.
-     Card → **Blocked** with the 🙋 template: `Why blocked` quotes the gate's
-     `human-gate:` lines; `To unblock` = review PR #<P> and merge it yourself, OR comment
-     `done` to approve (the next wave re-runs the gate, which merges). Label `needs-you`.
+     Card → **Approve** (not Blocked) with the 🙋 request: it quotes the gate's
+     `human-gate:` lines and says, with no checkboxes, "Comment `done` on this issue to
+     approve and merge — or `changes: <what>` to send it back." (or merge PR #<P> yourself;
+     the next wave re-runs the gate, which merges). Label `needs-you`, no `blocked:*` label.
    - **Exit 8 — 🙋 needs you.** Migrations for a database outside
      `migrations.allowed_envs`, an allowed migrate command that failed, or a declared
-     human-only step. Card → **Blocked** with the 🙋 template
+     human-only step. Card → **Approve** with the 🙋 request
      (`block-template.md` → "🙋 Needs you"), the gate's `needs-you:` commands copied
-     verbatim into `To unblock`, label `needs-you`, `blocked-by: -`. After the human
+     verbatim as plain lines (no checkboxes), label `needs-you`, `blocked-by: -`. After the human
      comments `done` after the current pinned request, the next wave verifies their
      permission and the head, then moves it to Review. Re-run the gate; labels do not
      authorize it. For exits 7 and 8, copy `approval-request:` into the canonical
      issue block and link it from the PR (no duplicate request); see block-template.md.
+     A trusted `done` posted BEFORE the current request never approves: say so once on the
+     issue — ``[reviewer] [report] ⚠️ your `done` at <time> came before this request — comment `done` again to approve``,
+     last line `stale-done: <comment id>` (the planner's `staleDone` list; skip if a
+     `stale-done:` line already names it).
+   - **Exit 3 — GitHub refused.** Card → **Blocked** with the §4 template, label `blocked:github`.
    - The rule in one line: the robot migrates the databases it was allowed to test its
      work; live databases, money, auth and destructive schema changes wait for a person.
 3. **Confirm the merge landed** — never trust the merge command's exit code:
@@ -372,7 +378,7 @@ two complete builds. In order, no shortcuts:
 4. Only then: close the issue, move card Review → **Done**, post the ✅ comment citing
    the merge commit sha.
 5. Merge refused (failing checks, conflicts, branch protection) → card Review →
-   **Blocked** with the §4 Block template naming the blocker. Never leave it in Review;
+   **Blocked** with the §4 Block template naming the blocker and label `blocked:github`. Never leave it in Review;
    a card left in Review gets re-picked and re-reviewed indefinitely.
 
 **Invariant:** a card in `Done` has its code on the base branch. The run loop's
@@ -381,7 +387,7 @@ without a confirmed merge makes a runaway look like a healthy run.
 
 ### Prefix discipline
 - Every new review thread Reviewer writes MUST start with its owner lane — `[builder]`, `[qa]`, or `[reviewer]` — then a label: `[blocker]`, `[issue]`, `[suggestion]`, `[nit]`, `[question]`, `[praise]` (writing-standard.md § 4). Older PRs may carry `[QA]` / `[review]`; read them as `[qa]` / `[reviewer]`.
-- Unprefixed **top-level** human PR comments → treat as 🧑 Block reason. Move card Review → Blocked with the full §4 template.
+- Unprefixed **top-level** human PR comments → treat as 🧑 Block reason. Move card Review → Blocked with the full §4 template, label `blocked:decision`.
 - Inline human review-thread replies → context only, no Block.
 
 ### `super-truth` is folded into super-review
@@ -431,7 +437,7 @@ sub-agents'.
 **Aggregation rule: take the MINIMUM of the two scores.** Rationale: one strong skeptic should be enough to block.
 
 Compare aggregate to `config.truth_threshold` (default `70`):
-- **Below threshold** → Reviewer MUST NOT approve. Open `[reviewer]`-prefixed PR thread quoting the lowest-confidence sub-agent finding. Write the full §4 Block template comment. Move card Review → Blocked with reason 🛡 truth-check failed (confidence X/100). The bot's "Why I cannot decide" line names the specific sub-agent finding it could not confirm.
+- **Below threshold** → Reviewer MUST NOT approve. Open `[reviewer]`-prefixed PR thread quoting the lowest-confidence sub-agent finding. Write the full §4 Block template comment. Move card Review → Blocked with reason 🛡 truth-check failed (confidence X/100), label `blocked:failed-review`. The bot's "Why I cannot decide" line names the specific sub-agent finding it could not confirm.
 - **Above threshold** → continue to approval decision.
 
 ### Block/Skip exits use the §4 mandatory template

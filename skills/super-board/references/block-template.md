@@ -1,12 +1,20 @@
 # Block exit template
 
-`Blocked` is an exit ramp, not a workflow step. There is no `Skipped` column (removed in v3.0.0).
+`Blocked` is an exit ramp for REAL stops, not a workflow step. There is no `Skipped` column
+(removed in v3.0.0). Since v3.2.0 two states that used to share it have their own place:
+
+- **Waiting on your merge decision** (merge gate exit 7 / 8) → the **`Approve`** column, with the
+  🙋 request below. Not Blocked.
+- **Waiting on another open card** (pre-flight `sequence`) → stays in **`Ready`** with the
+  `waits-on` label. Not Blocked.
 
 ## When / who moves cards there
 
 | Where | When | Who |
 |---|---|---|
-| Blocked | Card needs human action, or waits on another card | Any lane, from any workflow column |
+| Approve | Review passed; a human decides the merge (gate exit 7 / 8) | Reviewer |
+| Ready + `waits-on` | Pre-flight: same files as an open card/PR — waits on that issue | Pre-flight / Builder |
+| Blocked + `blocked:<reason>` | A real stop: decision, failed review, access, GitHub refusal, other | Any lane, from any workflow column |
 | Done (closed as not planned) | Card dropped on purpose: out of scope, won't do | Any lane; 🤷 comment below |
 
 Once moved, the card waits. **A card blocked only on other cards no longer waits for a human:**
@@ -17,6 +25,24 @@ it. Everything else — credentials, permissions, product decisions — still wa
 That sweep is why the `blocked-by:` line below is mandatory. Before it existed, `Blocked` was
 terminal: on 2026-08-20 five cards sat there long after their blockers had merged, because the only
 record of what they were waiting for was English prose in a comment nobody re-read.
+
+## Reason labels (mandatory on every transition into Blocked)
+
+Every move to Blocked adds **exactly one** reason label, so the mini-card says why without being
+opened. Pick it from the Block comment's reason tag:
+
+| Label | Reason tags | Examples |
+|---|---|---|
+| `blocked:decision` | ❓ 🧑 🎨 🛡 (sign-off) · Builder spec verdict **dev-led** | spec gap, too big to build, product/design call, destructive change needing sign-off |
+| `blocked:failed-review` | rebuild cap hit · 🛡 truth-check below threshold / inconclusive | same root cause N times, Reviewer could not confirm a finding |
+| `blocked:needs-access` | 🔐 🔑 💳 | missing secret / env / credential, permission, paid quota |
+| `blocked:github` | merge gate exit 3 | GitHub refused the merge (closed PR, branch protection, required check) |
+| `blocked:other` | 👯 📦 · a legacy ⏳ card still in Blocked · anything else | duplicate in progress, wrong board |
+
+When the card leaves Blocked — the sweep, a person dragging it, a `changes:` bounce — remove its
+`blocked:*` label in the same step. The planner's `unlabelled` list names Blocked cards with none
+(legacy cards) so the orchestrator can add one from the comment's tag; its `sweep` entries carry
+`removeLabels`. A card never carries two reason labels, and an Approve card carries none.
 
 ## Required Block comment template (mandatory on every transition into Blocked)
 
@@ -36,9 +62,8 @@ Why I (bot) cannot decide:
               "involves billing config; this is a customer money decision",
               "requires choosing between two valid auth providers; ambiguous from spec",
               "would drop a Postgres table; destructive, needs human sign-off">
-To unblock:  <concrete action the human can take, in their own checklist form>
-             [ ] <step 1>
-             [ ] <step 2>
+To unblock:  <concrete action the human can take, one plain step per line — no checkboxes;
+             ticking a box is not a signal the board reads>
 Owner:       <who acts next — the repo owner's GitHub login, "repo admin", "design" — never "someone", never a literal example name>
 Move back:   drag this card to Ready after the steps above are done
 blocked-by:  <comma-separated issue numbers, or "-" if nothing on this board clears it>
@@ -59,7 +84,7 @@ same rule: **prose above for the human, one parseable line below for the loop.**
 
 - `blocked-by: 32, 91` — this card returns to `Ready` the moment both close. The sweep does it.
 - `blocked-by: -` — nothing on this board clears it. It waits for a person, and the sweep leaves it
-  alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
+  alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` block and every 🙋 request.
 
 Write the numbers alone. **Never `blocked-by: none — but #26 must merge first`**: a line that says
 none and then names an issue is read as *no blocker* by the sweep and as *one blocker* by a human,
@@ -88,27 +113,29 @@ closed as not planned (`gh issue close <N> --reason "not planned"`) and moves to
 | 📦    | Wrong-place                 | belongs on a different board / repo                                      |
 | 🎨    | Pure design                 | no measurable AC; needs design pass first                                |
 | 👯    | Duplicate                   | pre-flight: a merged PR already delivers it, or an open PR / card is building it |
-| ⏳    | Sequenced                   | pre-flight: an open PR touches the same files — waits on the issue that PR closes |
-| 🙋    | Needs you (human-only step) | merge gate exit 7 (merge_policy: money/auth/schema/size — review and merge it, or comment `done` to approve) or exit 8: a migration for a DB the robot may not touch, an allowed migrate command failed, a `needs-you:` step in the PR body, `migrations.human_steps` |
+| ⏳    | Sequenced                   | pre-flight: an open PR touches the same files — the card stays in **Ready** with `waits-on` (not a Block) |
+| 🙋    | Needs you (human-only step) | merge gate exit 7 (merge_policy: money/auth/schema/size — review and merge it, or comment `done` to approve) or exit 8: a migration for a DB the robot may not touch, an allowed migrate command failed, a `needs-you:` step in the PR body, `migrations.human_steps` — the card goes to **Approve**, not Blocked |
 
-## 🙋 Needs you — a command only a human may run
+## 🙋 Needs you — the Approve column
 
-There is no "Needs you" column: the card goes to **Blocked**, tagged 🙋, with the `needs-you`
-label on the issue and the PR. Use it whenever the next step is a command the robot must not run
-itself — the merge gate's exit 7 (merge_policy routes the merge to a human: review and merge
-it yourself, or comment `done` to approve and let the next wave merge it) and exit 8 (migrations against a database outside `migrations.allowed_envs`,
-an allowed migrate command that failed, a declared human step), or any lane that hits one.
+Merge gate exits 7 and 8 move the card to **`Approve`** (v3.2.0; before, Blocked), tagged 🙋, with
+the `needs-you` label on the issue and the PR, and no `blocked:*` label. Exit 7: merge_policy routes
+the merge to a human — review and merge it yourself, or comment `done` to approve and let the next
+wave merge it. Exit 8: migrations against a database outside `migrations.allowed_envs`, an allowed
+migrate command that failed, a declared human step. The column only says where the human looks;
+approval is still the trusted, head-bound `done` below. Moving a card into Approve grants nothing.
 
-Checklist first: the person sees what to do before why. The why and the evidence fold away.
-Merge gate exit 7 (a human merges) has one item before `done`: `- [ ] Review and merge PR #<P>
-(or comment done to approve it)`. Include any `needs-you:` commands printed with
-that policy hold too: the approval covers those human steps as well as the code.
+What to do first, why folded away. **No checkboxes.** On 2026-10-12 the owner ticked
+`- [ ] Review and merge PR #18` and nothing happened: a ticked box is not a signal the board reads.
+The request states the one signal in plain words. Exit 7 adds `Review PR #<P>, or merge it yourself.`
+above it. Include any `needs-you:` commands printed with that policy hold too: the approval covers
+those human steps as well as the code.
 
 ```
 [reviewer] [blocker] 🙋 Your turn on #<N> — <title>
-- [ ] Run `<exact command 1, copy-paste ready>` on the **<env>** database
-- [ ] <exact command 2, if any>
-- [ ] Comment `done` here
+Run `<exact command 1, copy-paste ready>` on the **<env>** database.
+<exact command 2, if any>
+Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back.
 After a trusted human confirms this version, the next wave returns it to Review for verification.
 
 <details><summary>Why, and what I checked</summary>
@@ -125,8 +152,8 @@ blocked-by: -
 Example (what the person sees on GitHub):
 
 > **🙋 Your turn on #812 — Add plan column**
-> - [ ] Run `npx prisma migrate deploy` on the **live** database
-> - [ ] Comment `done` here
+> Run `npx prisma migrate deploy` on the **live** database.
+> Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back.
 >
 > After a trusted human confirms this version, the next wave returns it to Review for verification.
 > ▸ Why, and what I checked
@@ -134,7 +161,7 @@ Example (what the person sees on GitHub):
 The `Reason tag:` and `blocked-by: -` lines stay (inside the fold): the planner reads them
 (`super-board-deps.sh` → `needsYou`, `humanGated`). The issue and the PR get the `needs-you` label.
 
-**The checklist commands are exact.** Copy them from the gate's `needs-you: <command>` lines;
+**The commands are exact.** Copy them from the gate's `needs-you: <command>` lines;
 never paraphrase ("run the migration on prod"). A placeholder such as `<your live migrate command>`
 means the config has no command for that env — say so in the fold and name the config key
 (`migrations.commands.live`).
@@ -160,8 +187,22 @@ permissions or unreadable GitHub evidence keep it on hold. A still-failing comma
 also sends it back here. Old bare comments and `needs-you:done` labels never count;
 legacy blocked cards need one fresh pinned request and a fresh human reply. Move
 those legacy cards to Review once to generate it. If a PR changes while still
-Blocked, the planner's `refreshApproval` sends it to Review to create the new
-request automatically; it does not mark the new code approved.
+in Approve, the planner's `refreshApproval` sends it to Review to create the new
+request automatically; it does not mark the new code approved. A 🙋 card still
+in Blocked from before v3.2.0 is read the same way as an Approve card.
+
+**A `done` before the request does not count — and the human is told once.** A
+trusted `done` / `approve` / `merge` posted BEFORE the current pinned request is
+never approval (it may predate the code it would approve). The planner reports
+it in `staleDone`; the orchestrator posts, once:
+
+```
+[reviewer] [report] ⚠️ your `done` at <time> came before this request — comment `done` again to approve
+stale-done: <comment id>
+```
+
+The `stale-done:` line dedups the notice; it suppresses only a repeat notice,
+never approves anything.
 
 **Trust boundary.** GitHub Bot accounts cannot supply human approval. GitHub cannot
 distinguish a person from an agent using that person's token; agents must never
@@ -171,4 +212,4 @@ A human can still merge a PR manually under the repository's normal rules.
 
 ## Hard rule
 
-**The bot is forbidden from moving any card to Blocked, or dropping it to Done, *without* this full template populated. A 1-line "needs creds" comment is a contract violation and fails Reviewer's thread gate.**
+**The bot is forbidden from moving any card to Blocked, or dropping it to Done, *without* this full template populated — and, for Blocked, exactly one `blocked:<reason>` label. A 1-line "needs creds" comment is a contract violation and fails Reviewer's thread gate.**

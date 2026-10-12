@@ -142,8 +142,8 @@ is not.
 
 Small pull requests are a design goal: each ticket should land as one PR under the merge size cap
 (`merge_policy.auto_max_lines`, default 400 changed lines; lockfiles, generated files, snapshots and
-migration SQL do not count). A PR over the cap is never auto-merged — it parks in Blocked 🙋 as a
-"big PR". Catching it at lint time is cheaper than splitting a finished branch.
+migration SQL do not count). A PR over the cap is never auto-merged — it waits in Approve 🙋 as a
+"big PR" for a human merge decision. Catching it at lint time is cheaper than splitting a finished branch.
 
 Flag a ticket as **too big** when either holds:
 
@@ -152,7 +152,7 @@ Flag a ticket as **too big** when either holds:
 - **Spans many areas** — touches three or more separate areas (say UI, API, database, background
   job, email) where each could ship and be checked alone.
 
-What lint does: hold the ticket with ❓ (Blocked, `block-template.md`, reason "too big — split
+What lint does: hold the ticket with ❓ (Blocked + `blocked:decision`, `block-template.md`, reason "too big — split
 first") and offer to split it with `/to-tickets` into vertical slices — each slice thin end to end,
 independently mergeable, under the cap, with its own ACs and a `## Blocked by` line. The original
 ticket closes, or becomes the first slice, once the user approves the split.
@@ -251,7 +251,7 @@ Saved to `docs/super-board/pre-flight.md`. Each `[ ]` is a halt gate for `super-
 - **Idempotent** — re-running on already-clear issues is silent.
 - **Resumable** — Ctrl-C anywhere is safe; re-run lint to continue.
 - **Labels** — a card with no `qa` / `bug` / `feature` label gets one proposed with its AC fix (`qa` only when the ACs test what already exists and change nothing; it routes the card past Building). Applied on approve, like the AC edits.
-- **Walks active-pipeline columns only** — Ready + Building + QA + Review. Skips Backlog/Done/Blocked.
+- **Walks active-pipeline columns only** — Ready + Building + QA + Review. Skips Backlog/Approve/Blocked/Done.
 - **No local file writes** during Phase 4 — all state lives on GitHub issues. Session-reset is safe.
 
 ---
@@ -264,7 +264,7 @@ Before declaring lint complete, the worker MUST verify all three:
 - [ ] Every issue in active-pipeline columns (Ready, Building, QA, Review) either:
   - has a populated `## Acceptance Criteria` section that passes all 18 criteria, OR
   - was dropped on purpose (closed as not planned, Done, `🤷 dropped` comment), OR
-  - carries a `🛡 Blocked` comment naming the human-gated blocker.
+  - carries a `🛡 Blocked` comment naming the human-gated blocker, and one `blocked:<reason>` label.
 - [ ] No issue is left in an in-between state (flagged but not resolved, partially edited, or awaiting user input that never came).
 
 If any check fails, do **not** print the Phase 7 success banner. Re-enter the loop on the unresolved issues, or halt with a clear "N issues still need attention" message so the user can re-run `super-board lint`.

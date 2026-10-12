@@ -231,7 +231,7 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
 1. Worktree off `config.base_branch`.
 2. Branch `issue-<N>-<slug>` from `config.base_branch`.
 3. Docs check (section below) — if the ticket touches a third-party surface, an upgrade, or auth/billing, read the current official docs first.
-3b. **CODE SPEC first (CRB contract)** — `run.md` → Builder (first pass) step 3c: read-only investigation, then the ≤ 600-word per-ticket CODE SPEC (root-cause hypothesis with file:line cites · affected contracts · proposed approach · test plan · out of scope · mechanical-fix verdict) posted as a `[builder] [spec]` issue comment BEFORE any change. Verdict **dev-led** → card to Blocked 🙋, a developer takes it from the spec. Verdict **agent-fix** → build from the spec.
+3b. **CODE SPEC first (CRB contract)** — `run.md` → Builder (first pass) step 3c: read-only investigation, then the ≤ 600-word per-ticket CODE SPEC (root-cause hypothesis with file:line cites · affected contracts · proposed approach · test plan · out of scope · mechanical-fix verdict) posted as a `[builder] [spec]` issue comment BEFORE any change. Verdict **dev-led** → card to Blocked ❓ with label `blocked:decision`, a developer takes it from the spec. Verdict **agent-fix** → build from the spec.
 4. Implement the spec's Proposed approach as the smallest safe change covering ACs — under the PR size cap (section below).
 5. Commit + push (always).
 6. Open **draft PR** with the PR description template from `run.md` — title in commit-subject format, every marker block filled, `Docs:` bullets in Solution.
@@ -242,13 +242,13 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
 Each PR stays under the merge size cap: `merge_policy.auto_max_lines` (default 400 changed lines,
 additions + deletions; lockfiles, generated files, snapshots and migration SQL do not count — see
 `merge_policy.size_exclude`). A PR over the cap is never auto-merged: the merge gate parks it in
-Blocked 🙋 "big PR — please review".
+Approve 🙋 "big PR — please review" for a human merge decision.
 
 Check `git diff --shortstat origin/<base>...HEAD` (minus excluded files) before each push. If the
 change grows past the cap mid-build, **stop — do not push on**. Commit and push what you have on
 the branch, leave the PR as a draft, and post a PR comment proposing the split: the vertical
 slices (each thin end to end, under the cap, with its own ACs), which slice this PR keeps, and
-`/to-tickets` as the way to file the rest. Then move the card to Blocked with `❓` ("too big —
+`/to-tickets` as the way to file the rest. Then move the card to Blocked with `❓` and label `blocked:decision` ("too big —
 split proposed in PR #<P>", `block-template.md`). Never pad past the cap to "finish" the ticket.
 
 ### Lifecycle (Builder, rebuild)
@@ -291,4 +291,4 @@ Hash inputs (joined with `|`): lane (`build`) | error class | first 3 unique nor
 Builder NEVER squash-merges. Reviewer owns merge.
 
 ### Block exits use the §4 mandatory template
-When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation.
+When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template from `.claude/skills/super-board/references/block-template.md` and add exactly one `blocked:<reason>` label (remove it when the card leaves Blocked). A pre-flight sequence is not a Block: the card stays in Ready with label `waits-on` and a comment ending `blocked-by: <N>`. A 1-line "needs creds" comment is a contract violation.

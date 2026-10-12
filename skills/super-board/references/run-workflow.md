@@ -169,16 +169,30 @@ Repeat until a done condition or halt gate fires:
    cut off mid-lane. The legacy `claude-p` dispatcher does not run this guard.
 2. **Plan the wave** —
    `bash .claude/bin/super-board-wave-plan.sh --config <config-path>` →
-   The planner returns `cards`, `sweep`, `resume`, `changes`, `refreshApproval`, `flag` and `stranded`. **Act on
-   `sweep`, `resume`, `changes`, `refreshApproval`, `flag` and `stranded` BEFORE launching** (run.md → "The wave-start
-   sweep"): move every swept card to `Ready` with a comment naming what cleared
-   it, move every `resume` card (verified human approval of the current pinned
-   request) to `Review`; `needs-you:done` is display-only. Move `refreshApproval`
+   The planner returns `cards`, `sweep`, `release`, `unlabelled`, `resume`, `changes`, `classify`,
+   `refreshApproval`, `staleDone`, `flag` and `stranded`. **Act on every list but `cards` BEFORE
+   launching** (run.md → "The wave-start sweep"). The approval lists (`resume`, `changes`,
+   `classify`, `refreshApproval`, `staleDone`) read the **`Approve`** column, plus any 🙋 card left
+   in `Blocked` from before v3.2.0 (`needs-you` label or 🙋 tag) — treat that one exactly like an
+   Approve card. Move every swept card to `Ready`, drop its `removeLabels` (the `blocked:*`
+   reason), with a comment naming what cleared it. For every `release` card (a `waits-on` Ready
+   card whose blocker closed) remove `waits-on` and comment once
+   `[orchestrator] [report] ▶️ released · #<clearedBy> closed`. Give every `unlabelled` Blocked card
+   one `blocked:<reason>` label from its Block comment's tag (block-template.md → "Reason labels").
+   Move every `resume` card (verified human approval of the current pinned
+   request) Approve → `Review`; `needs-you:done` is display-only. Move `refreshApproval`
    cards to `Review` solely to review the changed head and post a fresh human request;
    clear their stale `needs-you:done` display labels. They have no approval to merge.
 
+   **`staleDone` cards — a trusted human's `done` came BEFORE the current pinned request.** It is
+   never approval (validate() accepts only a token after the request) and the card stays in
+   Approve. Tell the human once, on the issue, then nothing more:
+   ``[reviewer] [report] ⚠️ your `done` at <at> came before this request — comment `done` again to approve``
+   with the machine line `stale-done: <id>` last. The planner stops reporting an id once a trusted
+   comment carries its `stale-done:` line; the line can only suppress a repeat notice.
+
    **`changes` cards — a trusted human commented `changes: …` after the pinned request.**
-   For each: move Blocked → `Ready`, add `loop:rebuild-N`, remove the `needs-you` label, and
+   For each: move Approve (or legacy Blocked) → `Ready`, add `loop:rebuild-N`, remove the `needs-you` label, and
    comment `[orchestrator] [report] 🔁 changes requested by <login>` / `Did: relayed the human's
    points below for the rebuild` / a `> `-quoted verbatim quote of the `changes:` note /
    `Next: builder`. **Always blockquote verbatim quotes in reports** — a bare column-0
@@ -208,7 +222,7 @@ Repeat until a done condition or halt gate fires:
    For each card's comments, read intent and take the matching SAFE action; when a comment
    carries several intents, do each:
    - **changes** (the human wants THIS card's work altered — "do X too", "fix the wording",
-     "that is wrong") → act exactly as a `changes` card above: Blocked → `Ready`,
+     "that is wrong") → act exactly as a `changes` card above: Approve → `Ready`,
      `loop:rebuild-N`, remove `needs-you`, post `[orchestrator] [report] 🔁 changes requested
      by <login>` with a `> `-quoted verbatim quote and `Next: builder`. The old request is
      dead; approval restarts at the fresh pinned request on the new head.
@@ -220,7 +234,7 @@ Repeat until a done condition or halt gate fires:
    - **discussion** (a question, FYI, or thanks — no state change asked) → reply briefly,
      leave the card and its request as they are.
    - **unsure** (the comment could be approve-adjacent, or you cannot tell) → **hold**: leave
-     the card Blocked, post `[orchestrator] [report] 🤔 need a steer` naming the two readings and
+     the card in Approve, post `[orchestrator] [report] 🤔 need a steer` naming the two readings and
      asking the human to confirm (or to comment `done` / `changes: …`). Never resolve ambiguity
      toward a merge.
 
@@ -238,12 +252,14 @@ Repeat until a done condition or halt gate fires:
 
    A card may appear in `classify` only when no deterministic signal (`changesRequested`,
    verified `resume`) already routes it — the regex fast paths always win. Classified cards are
-   NOT in this pass's `cards`; their rebuild/spinoff joins the next wave.
+   NOT in this pass's `cards`; their rebuild/spinoff joins the next wave. Every route out of
+   Approve keeps the property above: only a verified `resume` heads toward a merge, and the gate
+   re-verifies it.
 
    Comment on flagged cards asking for their
    `## Blocked by` line to be fixed, and return every stranded Building card to
-   `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
-   `cards`; they join the next wave.
+   `Ready` (below). Swept, released, resumed, approval-refresh and stranded cards are NOT in this
+   pass's `cards`; they join the next wave.
 
    **Stranded Building cards.** A card in Building with no assignee between
    waves has no live worker — a stopped or crashed wave left it mid-build. For
@@ -261,16 +277,18 @@ Repeat until a done condition or halt gate fires:
    (`Pre-flight` in `super-board-wave.js`, before `runLane('build')`) runs one cheap sub-agent per
    batch of up to 5 Ready cards: already merged? already in progress (open PR or another card)?
    same files as an open PR? unclear? It runs `super-board-preflight.sh`, posts the Block template
-   and moves held/sequenced cards to Blocked itself (run.md → "Builder pre-flight"). The summary
-   reports those as `preflight:blocked`; `preflight:failed` means pre-flight was blind and the card
-   stays in Ready for the next wave. Sequenced cards carry a `blocked-by:` line, so this same sweep
-   frees them when the overlapping PR's issue closes.
+   and moves held cards to Blocked itself with one `blocked:<reason>` label (run.md → "Builder
+   pre-flight"). The summary reports those as `preflight:blocked`. A sequenced card STAYS in
+   `Ready` with the `waits-on` label and a comment ending `blocked-by: <N>`: the summary reports it
+   `preflight:sequenced` at `Ready`, the planner skips it while it carries the label, and `release`
+   frees it when `<N>` closes. `preflight:failed` means pre-flight was blind and the card stays in
+   Ready for the next wave.
    Wave width is every card the dependency graph says is free, in flight
    first (Review → QA → Ready), cut to `max_workers` when it is set (0 or
    absent = no cap). `max_workers` is the GitHub-limit valve: step 5 lowers it
    after a wave that hit the hourly limit. If `cards` is empty and
-   Building/QA/Review counts are 0 → done. If empty but cards sit in Blocked
-   only → report and stop.
+   Building/QA/Review counts are 0 → done. If empty but cards sit only in Approve,
+   Blocked, or Ready with `waits-on` → report and stop (Approve = the human's merge queue).
 3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
    then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
    proceed only if the list is exactly `[<bot_identity>]`. Adding an assignee
@@ -315,8 +333,9 @@ Repeat until a done condition or halt gate fires:
    ```
    A throttle hit adds one line: `🐢 GitHub hourly limit hit — max_workers 3 → 2 (config saved)`.
    Merged and bounced cards are counts, not lines — they need nobody. Every
-   `human-gate`/`blocked` card gets its line and its owner: that is the
-   human's queue. Never report a card as done that is not on the base branch.
+   `human-gate` card (now in Approve) gets a `🙋 #N Approve — comment done or changes:` line, and every
+   `blocked` card its reason label and owner: that is the human's queue. The workflow's
+   `columns` tally gives the counts. Never report a card as done that is not on the base branch.
 7. **Halt gates** — stop with a report if: 3 consecutive waves made zero
    progress (every card bounced/failed); block-rate exceeds
    `block_rate_alert_pct` of initial Ready; or the user says stop. The halt
@@ -390,7 +409,7 @@ the policy. Pair auto-merge with a non-production `base_branch`.
 > | Intent | `human_approves_merge` | Allowlist `gh pr merge` | Reviewer's terminal state |
 > | --- | --- | --- | --- |
 > | Attended — you click each merge | `false` | no | pauses on a prompt |
-> | Unattended auto-merge | `false` | **yes** | card → Done, merge confirmed (money/auth/schema, live migrations → 🙋 Blocked for you) |
+> | Unattended auto-merge | `false` | **yes** | card → Done, merge confirmed (money/auth/schema, live migrations → 🙋 Approve for you) |
 > | Human merges later, agent never does | `true` (or `merge_policy.default: "human"`) | no | card stays in Review |
 >
 > Row 2 is the only combination that lands code with nobody watching, and it
@@ -398,5 +417,5 @@ the policy. Pair auto-merge with a non-production `base_branch`.
 > guard refuses to start otherwise. Whichever row you pick, the Reviewer still
 > owes the full merge protocol in `run.md` → "Merge protocol": mark the draft PR
 > ready, merge, **verify the merge commit is an ancestor of the base branch**,
-> and only then move the card to Done. A merge-blocked PR goes to Blocked, not
-> back to Review.
+> and only then move the card to Done. A merge the gate holds for a human goes to
+> Approve; one GitHub refuses goes to Blocked (`blocked:github`); neither goes back to Review.

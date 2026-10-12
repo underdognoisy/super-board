@@ -195,20 +195,27 @@ def test_block_template_uses_the_header():
     heads = [b.splitlines()[0] for b in fenced(text) if b.startswith("[")]
     assert heads, "block-template.md has no header line"
     for h in heads:
+        # The one non-block fence is the pre-request `done` notice (a report).
+        if h.startswith("[reviewer] [report] ⚠️ your `done`"):
+            continue
         assert re.match(r"^\[(<role>|builder|qa|reviewer|collect|orchestrator)\] \[blocker\] \S", h), h
     assert "Reason tag:" in text, "super-board-deps.sh parses 'Reason tag:'"
 
 
-def test_needs_you_comment_is_checklist_first():
-    """The 🙋 comment shows what to do first; why and evidence fold away; the planner's lines stay."""
+DONE_LINE = "Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back."
+
+
+def test_needs_you_comment_is_action_first():
+    """The 🙋 request shows what to do first, with NO checkboxes (a ticked box is not a
+    signal the board reads — 2026-10-12); why and evidence fold away; the planner's lines stay."""
     text = (REF / "block-template.md").read_text(encoding="utf-8")
     block = next(b for b in fenced(text) if "🙋 Your turn on" in b)
     lines = block.splitlines()
     assert re.match(r"^\[reviewer\] \[blocker\] 🙋 Your turn on #<N> — ", lines[0]), lines[0]
-    assert lines[1].startswith("- [ ] "), "the first line after the header is a checklist item"
-    assert any(l == "- [ ] Comment `done` here" for l in lines), "the checklist ends with: comment done"
+    assert "- [ ]" not in block and "[x]" not in block, "the 🙋 request carries no checkboxes"
+    assert DONE_LINE in lines, "the request states the one signal: comment done, or changes:"
     fold = block.index("<details><summary>Why, and what I checked</summary>")
-    assert block.index("- [ ] ") < fold, "checklist before the fold"
+    assert block.index(DONE_LINE) < fold, "the instruction comes before the fold"
     assert re.search(r"Reason tag:[^\n]*🙋", block[fold:]), "deps.sh reads 'Reason tag: 🙋'"
     assert re.search(r"^blocked-by: -$", block[fold:], flags=re.M), "deps.sh reads 'blocked-by: -'"
 

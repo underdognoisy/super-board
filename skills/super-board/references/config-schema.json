@@ -69,11 +69,11 @@
   // Onboard sets it to the machine's zone. Absent → the machine's local zone.
   "timezone": "America/Toronto",
 
-  // Names of the Status options on the project, always all seven (v3.0.0).
+  // Names of the Status options on the project, always all eight (v3.2.0 adds Approve).
   // Aliases tolerated; canonicalized at read time. There is no Skipped column:
   // a card dropped on purpose is closed as not planned and moved to Done with a
   // 🤷 comment. Onboard adds any missing option and keeps every card.
-  "columns": ["Backlog", "Ready", "Building", "QA", "Review", "Blocked", "Done"],
+  "columns": ["Backlog", "Ready", "Building", "QA", "Review", "Approve", "Blocked", "Done"],
 
   // The three type labels (v3.0.0). Onboard creates them on the repo. Routing:
   //   qa      → Ready → QA → Review → Done (skips Building: test what exists)
@@ -111,7 +111,7 @@
     // Onboard recommends "human" when base_branch is production-detected.
     "default": "auto",
     // Small PRs by design. A PR with more changed lines (additions +
-    // deletions) than this waits for a human: Blocked 🙋 "big PR — please
+    // deletions) than this waits for a human: Approve 🙋 "big PR — please
     // review". Default 400; 0 = no size cap. Files matching size_exclude and
     // migration files (migrations.globs) do not count; migration lines are
     // reported separately. Builders keep PRs under this cap and lint flags
@@ -129,7 +129,7 @@
     ],
     // ALWAYS human, whatever `default` says. A PR matching ANY label, path glob
     // or keyword (case-insensitive, searched in the diff's ADDED lines only) of
-    // a category exits the gate 7: no merge, card → Blocked 🙋 (the human merges
+    // a category exits the gate 7: no merge, card → Approve 🙋 (the human merges
     // it, or comments "done" to approve and the next wave merges).
     // Setting this key replaces the whole default set; {} turns it off.
     // Globs: `**/` = any dirs (incl. none), `**` = anything, `*` = one segment.
@@ -157,7 +157,7 @@
   // Database migrations at merge time (v2.6.0). A PR touching `globs` is a
   // migration PR. Inside the merge lock, after verify_commands pass, the gate
   // runs commands[env] for every env in allowed_envs, then merges. It exits 8
-  // (🙋 needs you → Blocked, block-template.md) instead when: target_env is not
+  // (🙋 needs you → Approve, block-template.md) instead when: target_env is not
   // in allowed_envs, an allowed command fails, target_env is allowed but has no
   // command, or human_steps is non-empty. A `needs-you: <command>` line in the
   // PR body does the same for any PR. A trusted human comments "done" after a

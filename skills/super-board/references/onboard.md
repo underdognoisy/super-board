@@ -205,25 +205,29 @@ Write it atomically (temp file + rename) after every answer. A halt never loses 
 
 3. 🗂️ BOARD — one question: which board
    ├─ One checklist line, one labels line, no question about either:
-   │      Columns: ✓ Backlog ✓ Ready ✓ Building ✓ QA ✓ Review ✓ Blocked ✓ Done
+   │      Columns: ✓ Backlog ✓ Ready ✓ Building ✓ QA ✓ Review ✓ Approve ✓ Blocked ✓ Done
    │      Labels: feature · bug · qa (qa skips Building; no label = feature)
+   │      State labels: needs-you · waits-on · blocked:decision · blocked:failed-review ·
+   │        blocked:needs-access · blocked:github · blocked:other
    ├─ python3 $SB/super-board-setup.py board-rank --owner <owner>   (boards ranked by matching
-   │    columns; `recommend` = the best with ≥ 4 of 7)
+   │    columns; `recommend` = the best with ≥ 4 of 8)
    │  python3 $SB/super-board-setup.py names                         (two names from
    │    package.json / README / folder)
    ├─ AskUserQuestion "Which board?" (header "Board"):
-   │    • Use <title> (#<n>) — <m> of 7 columns match, I'll add <missing> (Recommended)
+   │    • Use <title> (#<n>) — <m> of 8 columns match, I'll add <missing> (Recommended)
    │        description: its URL (github.com/users/<owner>/projects/<n>)
    │    • Create a new board named "<names[0]>"       (Recommended when nothing is recommended)
    │    • Create a new board named "<names[1]>"
    │    "Other" = Type a name.
    ├─ Reuse → board-migrate --owner <o> --number <n> --repo <owner/repo>: adds the missing
-   │    columns, the three labels, keeps every card. Prints `<title> ready`.
+   │    columns, the type and state labels, keeps every card. Prints `<title> ready`.
    └─ New → gh project create --owner <o> --title "<name>", link it to the repo, then
-      board-migrate --prune-empty on it (the seven columns replace GitHub's default Todo /
+      board-migrate --prune-empty on it (the eight columns replace GitHub's default Todo /
       In Progress; labels). Prints its URL.
-   There is no "Needs you" column and no Skipped column: a card waiting on a person goes to
-   Blocked with 🙋 (block-template.md); a card dropped on purpose is closed and moved to Done.
+   There is no Skipped column. A card waiting on a human merge decision (merge gate exit 7/8)
+   goes to Approve with 🙋; a real stop goes to Blocked with one `blocked:<reason>` label
+   (block-template.md); a sequenced card stays in Ready with `waits-on`; a card dropped on
+   purpose is closed and moved to Done.
    Second account chosen in step 2 → finish references/second-account.md now; verify bot access.
 
 4. 🌿 BRANCH
@@ -276,7 +280,7 @@ Write it atomically (temp file + rename) after every answer. A halt never loses 
        sets merge_policy.allow_auto_on_production: true (run.md's guard needs it).
        → merge_policy.default "auto" | "human"; auto_max_lines 400 (lockfiles, generated,
          snapshots, migration SQL not counted); always_human = schema defaults (money, auth,
-         destructive schema). A matching PR parks in Blocked with 🙋.
+         destructive schema). A matching PR waits in Approve with 🙋.
     b. "Push guard" — "Block pushing straight to main?" [Yes (Recommended for a repo with
        commits) / No]. Skipped when settings.json already wires guard-protected-push.py. Script
        missing (--no-hooks install) → record the answer and say: "Run ./install.sh --no-hooks
@@ -335,7 +339,7 @@ Write it atomically (temp file + rename) after every answer. A halt never loses 
    │    Change one thing → pick the step, walk only it, back here / Cancel — nothing written].
    ├─ Write, in order (each atomic; stop and report on the first failure — answers are kept):
    │    ├─ .claude/super-board/configs/<slug>.json (committed): description, project, target
-   │    │    {type: repo | repo+url}, repo, base_branch, timezone, columns (the seven), labels,
+   │    │    {type: repo | repo+url}, repo, base_branch, timezone, columns (the eight), labels,
    │    │    paths, merge_policy, migrations, collect (incl. custom), notifications {channel:
    │    │    "session", bot_identity}, worker_backend "workflow". No `variant`.
    │    ├─ .claude/super-board/active ← <slug>
@@ -458,10 +462,11 @@ remove a pending recovery record; use its saved state to reconcile a conflict be
 
 1. **Config validates** — `.claude/super-board/configs/<slug>.json` parses, has every required
    field from `config-schema.json` (incl. `notifications.bot_identity`, `merge_policy`,
-   `migrations`), has no `variant`, and `columns` is the seven.
+   `migrations`), has no `variant`, and `columns` is the eight.
 2. **Active pointer** — `.claude/super-board/active` holds exactly the slug + `\n`.
 3. **Board columns and labels** — `gh project field-list <n> --owner <o>` returns Backlog, Ready,
-   Building, QA, Review, Blocked, Done (no Skipped); `gh label list` has qa, bug, feature.
+   Building, QA, Review, Approve, Blocked, Done (no Skipped); `gh label list` has qa, bug, feature,
+   needs-you, waits-on and the five `blocked:*` labels.
 4. **Setup green** — `python3 .claude/bin/super-board-setup.py check` exits 0 (or only `needs`
    the user declined).
 5. **Workflow runtime** — unless `worker_backend` is `"claude-p"`, the step-1 `node --check` passes.

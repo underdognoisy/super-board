@@ -31,7 +31,7 @@ In Codex the skill is not a slash command: it is `$super-board <verb>`, found in
 | `super-board run ...` with config `worker_backend: "claude-p"` (legacy, explicit opt-in) | `references/run.md` |
 | `super-board stop ...` / "stop the run" / "pause the loop" / "kill super-board" | `references/stop.md` |
 | "resume" / "pick up where I left off" / "restart after stop" | `references/stop.md` (resume = run; no separate verb) |
-| Anything about Blocked exits, 🙋 needs you, or dropping a card | `references/block-template.md` |
+| Anything about Blocked exits and reason labels, the 🙋 Approve request, or dropping a card | `references/block-template.md` |
 | Config structure questions | `references/config-schema.json` |
 | Worker gh-call discipline / rate-limit recovery | `references/rate-limit-etiquette.md` (+ `scripts/super-board-gh-guard.sh`) |
 

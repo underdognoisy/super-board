@@ -73,8 +73,11 @@ The agent prompts carry a guard line, but the rule stands.
 
 ## Lanes and label routing
 
-One board shape (v3.0.0): Backlog · Ready · Building · QA · Review · Blocked · Done. A card's
-label picks its path — three labels, no per-board variant:
+One board shape (v3.2.0): Backlog · Ready · Building · QA · Review · Approve · Blocked · Done.
+Backlog is intake only; runs ignore it. `Approve` holds cards that passed review and wait on a
+human merge decision (merge gate exit 7 / 8). `Blocked` holds only real stops, each with one
+`blocked:<reason>` label (block-template.md → "Reason labels"). A sequenced card stays in `Ready`
+with the `waits-on` label. A card's label picks its path — three labels, no per-board variant:
 
 | Label | Path | Why |
 |---|---|---|
@@ -136,7 +139,7 @@ There is **exactly one branch per issue** and **exactly one PR per issue**. All 
 - Builder creates the branch off `config.base_branch`, writes code, commits + pushes, opens a **draft PR**.
 - Tester checks out the same branch in a fresh worktree, adds tests, commits to the same branch, pushes.
 - Reviewer is the **only lane that merges**. On approval: squash-merges PR into `base_branch`, deletes the branch.
-- If `config.merge_policy` says a human merges (`default: "human"`, or a money / auth / schema / size hit), the merge gate exits 7 and the Reviewer parks the card in Blocked for a human click instead.
+- If `config.merge_policy` says a human merges (`default: "human"`, or a money / auth / schema / size hit), the merge gate exits 7 and the Reviewer moves the card to **Approve** for a human decision instead.
 
 ## PR description template
 
@@ -233,7 +236,7 @@ e2e/streaming/ttfb.spec.ts:18   [qa] [issue] spec asserts status only — add a 
 |---|---|---|
 | Builder (Building → QA) | All `[builder]` threads on this PR | Stay in Building, fix, then exit |
 | Tester (QA → Review) | All `[qa]` threads on this PR | Stay in QA, fix, then exit |
-| Reviewer (approving merge) | All findings and human requests; any conversations GitHub requires resolved | Bounce: `[builder]` open → Ready; `[qa]` open → QA; unresolved human decision → Blocked |
+| Reviewer (approving merge) | All findings and human requests; any conversations GitHub requires resolved | Bounce: `[builder]` open → Ready; `[qa]` open → QA; unresolved human decision → Blocked + `blocked:decision` |
 
 Threads are resolved via `gh api graphql` `resolveReviewThread` mutation when the fix is committed.
 
@@ -268,8 +271,8 @@ The script asks four questions and the agent adds a fifth; the agent owns the ju
 | 5 | Too big? | — | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
 
 **Two Ready cards that overlap each other, neither with an open PR, go one at a time.** The
-lower-numbered card proceeds; only the other is sequenced, with `blocked-by: #<lower>`, and the
-wave-start sweep frees it once the lower one closes. Sequencing each against the other leaves
+lower-numbered card proceeds; only the other is sequenced (`waits-on`, `blocked-by: <lower>`), and
+the wave-start `release` frees it once the lower one closes. Sequencing each against the other leaves
 both with nothing to wait on and neither built — the same deadlock comes back every wave.
 
 The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanical `hold` into
@@ -281,11 +284,11 @@ The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanic
 | Verdict | Action | Block template (`block-template.md`) |
 |---|---|---|
 | `proceed` | nothing; the Builder starts | — |
-| `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: <repo-owner login> (close as duplicate) · `blocked-by: -` |
-| `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
-| `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" · suggests splitting with `/to-tickets` into vertical slices, each under the cap · `blocked-by: -` |
-| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy>` — the wave-start sweep frees it |
+| `hold` — done | move card to Blocked, label `blocked:other` | `👯` · names the merged PR / closed issue · Owner: <repo-owner login> (close as duplicate) · `blocked-by: -` |
+| `hold` — in progress | move card to Blocked, label `blocked:other` | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
+| `hold` — unclear | move card to Blocked, label `blocked:decision` | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
+| `hold` — too big | move card to Blocked, label `blocked:decision` | `❓` · "too big — likely over <cap> changed lines / spans <areas>" · suggests splitting with `/to-tickets` into vertical slices, each under the cap · `blocked-by: -` |
+| `sequence` — `blockedBy` non-empty | card **stays in Ready**: add label `waits-on`, return column `Ready` + `blockedBy` | no Block template. One comment: `[builder] [report] ⏳ waits on #<N> · <overlapping PR and files>`, last line the machine line `blocked-by: <N>`. The planner never picks a `waits-on` card; its `release` list frees it once `<N>` closes |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
 
@@ -316,14 +319,14 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
     Ground rules: cite only code you actually opened; if you cannot find the mechanism, say
     exactly where you looked and what's missing — never invent. Post the spec as an issue
     comment headed `[builder] [spec]` (the card's visible trace).
-    Verdict **dev-led** → stop: move the card to Blocked 🙋 (block-template; the spec comment
-    is the evidence) — a developer takes it from the spec. Verdict **agent-fix** → step 4.
+    Verdict **dev-led** → stop: move the card to Blocked `❓`, label `blocked:decision`
+    (block-template; the spec comment is the evidence) — a developer takes it from the spec. Verdict **agent-fix** → step 4.
 4. Implement the spec's Proposed approach as the smallest safe change covering ACs (the spec's
    test plan merges into the AC test plan; the PR body's Solution block links the spec
    comment), under the PR size cap
    (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
    push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
-   move the card to Blocked `❓` — never push on past the cap (super-build → "Keep each PR small").
+   move the card to Blocked `❓` (`blocked:decision`) — never push on past the cap (super-build → "Keep each PR small").
 5. Commit + push (always). Commits follow writing-standard.md § 1 (`✨ [feat] chat: stream replies` + short bullets).
 6. Open draft PR linked to the issue with the PR description template (title in commit-subject format, every block filled).
 7. Follow [PR author notes](pr-author-notes.md), then post the `[builder] [report]` PR comment (see "Commenting cadence").
@@ -429,7 +432,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - **Budget cap (added 2026-05-22): each sub-agent ≤50 gh calls.** Prefer local `git blame` / `git log` over `gh api graphql`. If a sub-agent needs >50 calls to reach confidence, it returns `confidence: "insufficient_data"` and the Reviewer flags the card as 🛡 truth-check inconclusive instead of burning the shared quota. See `rate-limit-etiquette.md`.
    - **Brief:** use the fixed sub-agent brief in super-review → "Adversarial mode" verbatim. Never write your own. It states that Over-engineering is Should fix, never Blocker on its own, and never lowers confidence.
    - Aggregate into a confidence score (0-100). Compare against `config.truth_threshold` (default 70).
-   - **Below threshold** — Reviewer MUST NOT approve. Open a `[reviewer]`-prefixed PR thread quoting the lowest-confidence sub-agent finding, write the full Block template comment (see §4 Block/Skip), move card Review → Blocked with reason tag 🛡 truth-check failed (confidence X/100). The card stays Blocked until human review; the bot's "Why I cannot decide" line names the specific sub-agent finding it could not confirm.
+   - **Below threshold** — Reviewer MUST NOT approve. Open a `[reviewer]`-prefixed PR thread quoting the lowest-confidence sub-agent finding, write the full Block template comment (see §4 Block/Skip), move card Review → Blocked with reason tag 🛡 truth-check failed (confidence X/100), label `blocked:failed-review`. The card stays Blocked until human review; the bot's "Why I cannot decide" line names the specific sub-agent finding it could not confirm.
    - **Above threshold** — continue to step 7.
    - **No Reproducer needed** — Tester's tests were re-run in step 5.
 7. Decide per finding. First re-apply the Over-engineering rule to every collected finding, whatever a sub-agent wrote: Should fix, never Blocker, never on its own a bounce or block. Then:
@@ -438,7 +441,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    - **Code-side new finding** → open new `[builder]`-prefixed PR thread, comment, move card Review → Ready (label `loop:rebuild-N`).
    - **Test-side new finding** → open new `[qa]`-prefixed PR thread, comment, move card Review → QA (label `loop:rebuild-N`).
    - **CI-budget block (💳, added 2026-05-22)** — if remote CI jobs `failed_to_start` due to `Actions budget` AND `config.auto_merge_on_ci_budget_block` is true AND local-evidence is strong (truth ≥ threshold, Tester suite green on rerun in step 5, all `[builder]`/`[qa]` threads clean) → **squash-merge anyway** on local evidence; do NOT move to Blocked. Write the PR's `redcheck` block (`> [!WARNING]` · `🔴 Merged with a failing check: <check> · CI budget block`) and a `[reviewer] [report] ✅ merged · CI-budget bypass` comment on the PR and the issue citing: (a) the failed CI run ID, (b) the Tester pass-count, (c) the truth-gate score. Reason: CI failure-to-start ≠ test failure; with strong local evidence, parking the card wastes pipeline time. This bypass is ONLY for `💳` — never for `🛡` truth-fail, `🔐` missing creds, or `🧑` human-only decisions.
-   - **Human-gate / Blocker finding (destructive schema, API contract, money, auth, live-DB migration) / rebuild cap hit (config.rebuild_cap)** → write the full Block template (see §4), move card Review → Blocked. A clean PR that only *touches* money, auth or schema is not a blocker — run the merge protocol; the gate's `merge_policy` routes it to a human (exit 7 → 🙋 Blocked).
+   - **Human-gate / Blocker finding (destructive schema, API contract, money, auth, live-DB migration) / rebuild cap hit (config.rebuild_cap)** → write the full Block template (see §4), move card Review → Blocked with one reason label (`blocked:decision` for a finding a human must rule on, `blocked:failed-review` for the rebuild cap). A clean PR that only *touches* money, auth or schema is not a blocker — run the merge protocol; the gate's `merge_policy` routes it to a human (exit 7 → 🙋 Approve).
 8. Write the **Reviewer report** on every exit from step 3b on — bounce, block, human gate, merge (a Gate 1 thread bounce reviews nothing and writes none). It is ONE comment per PR, **edited in place** each round: find it by the marker (step 3b's lookup, plus `.url` — the number after `#issuecomment-` is its id) and `gh api -X PATCH repos/<owner>/<repo>/issues/comments/<id> -F body=@<file>`; post a new comment only when none exists. It is what step 3b reads next time, so the first line is the stable marker and every finding keeps its id (writing-standard.md § 4):
 
    ```
@@ -455,7 +458,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    | R2 | qa | Verification miss | `e2e/streaming/ttfb.spec.ts:18` | <one line> | ❌ not fixed |
    | R3 | builder | Over-engineering | `src/api/retry.ts:1` | <what it builds → smaller thing> (should fix, not blocking) | open |
    ```
-   Status words in the header: `merge-ready` · `bounced` · `blocked` · `human-gated` · `merged`. Keep every row across rounds; update its Status (`open` · `✅ fixed` · `❌ not fixed` · `no longer applies`). New findings take the next free id. Every finding names its class — Gap / Bug / Verification miss / Scope drift / Over-engineering (super-review → "Classify findings"); a checked hypothesis that held is not a finding, it goes on the `✅ Done` line.
+   Status words in the header: `merge-ready` · `bounced` · `blocked` · `human-gated` (card in Approve) · `merged`. Keep every row across rounds; update its Status (`open` · `✅ fixed` · `❌ not fixed` · `no longer applies`). New findings take the next free id. Every finding names its class — Gap / Bug / Verification miss / Scope drift / Over-engineering (super-review → "Classify findings"); a checked hypothesis that held is not a finding, it goes on the `✅ Done` line.
 9. Clean up worktree.
 
 ### Merge protocol (Reviewer only — added 2026-08-06, issue #9)
@@ -491,7 +494,7 @@ on the base branch**.
      0 → merged; continue to step 4
      2 → the branch no longer builds against the base → **rebase pass** (see below)
      3 → GitHub refused after a green verify (branch protection, required check)
-          → Blocked with the §4 template; this one really is a human's
+          → Blocked with the §4 template, label `blocked:github`; this one really is a human's
      4 → another card holds the merge lock → leave the card in Review, next wave retries
      5 → the base does not merge in cleanly → **rebase pass** (see below)
      6 → the PR head is not the commit you reviewed (a push after review, or during
@@ -499,18 +502,19 @@ on the base branch**.
           comment naming both shas; the next wave reviews the new head
      7 → merge_policy: a human merges this one. Stdout carries one
           `human-gate: <money|auth|schema|size|default|policy> — <evidence>` line per
-          hit. Card Review → **Blocked** with the 🙋 template: `Why blocked` names the
-          category and evidence; `To unblock` = "[ ] review PR #<P> and merge it
-          yourself" OR "[ ] comment `done` to approve — the next wave merges it";
-          label `needs-you`, `blocked-by: -`. A human merge moves the card to Done the
+          hit. Card Review → **Approve** (not Blocked) with the 🙋 request: the fold names
+          the category and evidence; the visible lines say "Review PR #<P>, or merge it
+          yourself." and "Comment `done` on this issue to approve and merge — or
+          `changes: <what>` to send it back." — no checkboxes; label `needs-you`,
+          `blocked-by: -`, no `blocked:*` label. A human merge moves the card to Done the
           usual way; a `done` brings it back through `resume`, and the gate clears the
           policy hold only with a verified trusted approval of the current request.
      8 → 🙋 needs you. Stdout carries one `needs-you: <command>` line per human step
           (migration for an env outside `migrations.allowed_envs`, an allowed migrate
           command that failed, a `needs-you:` line in the PR body,
-          `migrations.human_steps`). Card Review → **Blocked** with the 🙋 template
-          (block-template.md → "🙋 Needs you"), the commands copied verbatim into
-          `To unblock`, label `needs-you` on issue and PR, `blocked-by: -`. When the
+          `migrations.human_steps`). Card Review → **Approve** with the 🙋 request
+          (block-template.md → "🙋 Needs you"), the commands copied verbatim as plain
+          lines, label `needs-you` on issue and PR, `blocked-by: -`. When the
           human comments `done` after the current pinned request, the wave planner
           verifies their permission and the head before resuming Review. For exits
           7 and 8, copy the gate's `approval-request:` line into the canonical issue
@@ -522,8 +526,8 @@ on the base branch**.
 ```
 
 **Ordering invariant.** `Done` means "merged" — or closed as not planned on purpose, with a 🤷
-comment (there is no Skipped column). If step 3 cannot be satisfied, the card goes to Blocked,
-never Done. Anything that reads the board — status, halt gate, the
+comment (there is no Skipped column). If step 3 cannot be satisfied, the card goes to Blocked
+(`blocked:github` when GitHub refused, else `blocked:other`), never Done. Anything that reads the board — status, halt gate, the
 landed-work progress signal — depends on Done meaning the code is on the base branch.
 
 ## Commenting cadence (issue + PR, every lane)
@@ -633,12 +637,12 @@ Claim uses a **GitHub Issue assignee mutex** — atomic compare-and-set via `gh 
 2. SANITY CHECK: issue body has `## Acceptance Criteria` with ≥1 bullet
    ├─ Missing → write the full Block template (see §4) with reason ❓
    │           release claim (`gh issue edit --remove-assignee`)
-   │           move card to Blocked, continue with next card.
+   │           move card to Blocked + `blocked:decision`, continue with next card.
    └─ Present → proceed.
 3. Do the lane's work (build / QA / review).
 4. If this lane opened a PR or pushed changes, refresh [PR author notes](pr-author-notes.md).
    Comment evidence on issue + PR (writing-standard.md § 4) and rewrite your PR body blocks.
-5. Move card to next column (or Blocked with the full §4 template; dropped on purpose → closed, Done, 🤷 comment).
+5. Move card to next column (or Blocked with the full §4 template and one `blocked:<reason>` label; merge gate 7 / 8 → Approve; dropped on purpose → closed, Done, 🤷 comment).
 6. RELEASE CLAIM (`gh issue edit --remove-assignee super-board-bot[bot]`) and remove descriptive label.
 ```
 
@@ -663,13 +667,13 @@ The three locks (assignee, in-flight file, lane PID) are defense in depth: any o
 
 | Gate | Action |
 |---|---|
-| `config.rebuild_cap` reached on same card + same root-cause hash | Move card to Blocked with full §4 template (reason 🛡), continue run |
+| `config.rebuild_cap` reached on same card + same root-cause hash | Move card to Blocked with full §4 template (reason 🛡), label `blocked:failed-review`, continue run |
 | No card progresses for 3 ticks AND no lane is idle | Halt, dump state |
 | Auth expires mid-run | Halt, ping user with refresh instruction |
 | Pre-flight check fails on re-validation | Halt with the specific missing item |
 | Merge conflict, or a stale branch the merge gate rejects | Move card to **`Ready`** with the `loop:rebase` label — NOT Blocked. See "The rebase pass" below |
 | User-defined time/budget window reached | Graceful halt: finish in-flight workers, no new dispatches |
-| Destructive action would be required (prod deploy, db drop, secret rotation) | Halt, never proceed; move card to Blocked with reason 🛡 |
+| Destructive action would be required (prod deploy, db drop, secret rotation) | Halt, never proceed; move card to Blocked with reason 🛡, label `blocked:decision` |
 | Block-rate alert: Blocked count > `config.block_rate_alert_pct` of initial Ready | Post the breakdown in the run report, continue run |
 
 ### The rebase pass
@@ -701,30 +705,42 @@ without a marker and still failed to typecheck.
 
 `Blocked` is still correct when the rebase itself cannot be done: the two sides genuinely disagree
 about behaviour, or resolving requires a product decision. That is a `❓` or `🧑` block with the
-usual template — and, per §4, a `blocked-by:` line.
+usual template — and, per §4, a `blocked-by:` line and the `blocked:decision` label.
 
 ### The wave-start sweep
 
-Before planning any wave, `super-board-wave-plan.sh` reports five lists the orchestrator must act on
-**before** launching:
+Before planning any wave, `super-board-wave-plan.sh` reports these lists the orchestrator must act on
+**before** launching (the approval routes read the `Approve` column, plus any 🙋 card still in
+`Blocked` from before v3.2.0):
 
-- **`sweep`** — `Blocked` cards whose blockers have all closed. Move each to `Ready` and comment
-  naming what cleared it (`clearedBy` carries the numbers). They then join this very wave.
+- **`sweep`** — `Blocked` cards whose blockers have all closed. Move each to `Ready`, remove the
+  labels in `removeLabels` (its `blocked:*` reason), and comment naming what cleared it
+  (`clearedBy` carries the numbers). They then join the next wave.
+- **`release`** — `Ready` cards labelled `waits-on` whose blocker has closed. Remove `waits-on` and
+  comment once: `[orchestrator] [report] ▶️ released · #<clearedBy> closed`. The next wave picks it.
+  A `waits-on` card is never picked while it carries the label.
+- **`unlabelled`** — `Blocked` cards with no `blocked:<reason>` label (legacy, or a lane that
+  skipped it). Add exactly one, mapped from the newest Block comment's reason tag
+  (block-template.md → "Reason labels"); `blocked:other` when the tag is missing.
+- **`staleDone`** — `Approve` cards whose trusted human commented `done` BEFORE the current
+  request. It never approves. Post once, on the issue:
+  ``[reviewer] [report] ⚠️ your `done` at <at> came before this request — comment `done` again to approve``,
+  last line the machine line `stale-done: <id>` (it dedups the notice, nothing else).
 - **`stranded`** — `Building` cards with no claim. Nothing selects from Building,
   so a wave stopped mid-build leaves them there forever. Remove any leftover build worktree, keep
   the branch, move the card to `Ready`, and comment naming the branch. The legacy dispatcher does
   the same once at start (`reclaim_stranded_building`).
-- **`resume`** — 🙋 `Blocked` cards whose newest pinned request has a later `done`
+- **`resume`** — 🙋 `Approve` cards whose newest pinned request has a later `done`
   from a human with verified write, maintain or admin permission, for the current
   PR head. Move each to **Review**; `needs-you:done` may be kept as a display label
   only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
   which independently checks the request, current policy/steps and head, verifies
   the build, and runs allowed migrations. New code or a newer request needs fresh
   human approval; a label or old bare comment cannot bypass that hold.
-- **`refreshApproval`** — a PR head changed while its card was still `Blocked`.
+- **`refreshApproval`** — a PR head changed while its card was still in `Approve`.
   Move it to **Review** and remove stale `needs-you:done` display labels. The Reviewer
   reviews the new code and lets the gate produce a new pinned request, then returns
-  it to **Blocked** for a fresh human reply. This is not an approved resume.
+  it to **Approve** for a fresh human reply. This is not an approved resume.
 - **`flag`** — cards whose `## Blocked by` section could not be parsed. Leave them where they are
   and comment asking for the line to be fixed, quoting the `why`. Never guess: a card treated as
   free on an unreadable line gets built against a base that does not have what it needs.
@@ -756,7 +772,8 @@ Different hash on the same card resets the counter — the bot recognizes that p
 
 The loop exits cleanly when:
 - All active-pipeline columns are empty; OR
-- Only Blocked/Done cards remain (Backlog is not part of a run); OR
+- Only Approve/Blocked/Done cards (and `waits-on` Ready cards with an open blocker) remain
+  (Backlog is not part of a run); OR
 - A halt gate fires.
 
 ## Run manifest
@@ -773,7 +790,7 @@ Records: config used, columns, target, per-card history (claim → completion �
 - **Per card completion** — `✅ Tester → #41 passed all checks → Review`.
 - **Per Block** — short headline + reason tag (`⛔ #19 blocked → 🔐 missing OPENAI_API_KEY`) + link to the full §4 template comment on the issue.
 - **Every 10 dispatches** — brief column-count snapshot.
-- **Block-rate alert** — when Blocked count exceeds `config.block_rate_alert_pct` of initial Ready: ping with breakdown ("11/30 Ready cards blocked: 🔐×6, 💳×3, ❓×2 — see project board"). One-shot per run (does not re-fire).
+- **Block-rate alert** — when Blocked count exceeds `config.block_rate_alert_pct` of initial Ready: ping with breakdown by reason label ("11/30 Ready cards blocked: needs-access×9, decision×2 — see project board"). Approve cards are not blocks and do not count. One-shot per run (does not re-fire).
 - **Final** — end column counts, total moved to Done, blockers (with reason-tag breakdown), total wall-clock.
 
 ## Worker rate-limit etiquette (read before any burst of gh calls)
@@ -796,7 +813,7 @@ Before releasing the claim assignee and exiting, every worker MUST verify:
 - [ ] Card column move's mutation returned success. **Trust the exit code of `super-board-card.sh move`** — a re-read of the board was the per-worker quota tax (`rate-limit-etiquette.md` §3). If the mutation returned non-zero, preserve its unknown outcome, leave the assignee in place, and pause the run locally. Reconcile the remote card state before any repeat; never blindly retry a write or depend on a successful halt comment.
 - [ ] Claim assignee released (`gh issue edit --remove-assignee <bot_identity>`) and the descriptive `loop:in-*` label removed.
 - [ ] On failure handoff: `root-cause-hash:` line is present in the PR handoff comment (per "Root-cause hash" above).
-- [ ] On Block/Skip exit: the full template from `block-template.md` is populated on BOTH the issue and the PR (if a PR exists); the reason emoji is one of the nine in the vocabulary table (🔐 💳 🔑 ❓ 🛡 🧑 🤷 📦 🎨).
+- [ ] On Block/Skip exit: the full template from `block-template.md` is populated on BOTH the issue and the PR (if a PR exists); the reason emoji is one of the nine in the vocabulary table (🔐 💳 🔑 ❓ 🛡 🧑 🤷 📦 🎨); exactly one `blocked:<reason>` label is on the issue.
 - [ ] `gh-quota-on-exit:` line appended to PR handoff comment.
 
 A worker that cannot satisfy this checklist must NOT release its claim. It either fixes the gap and re-checks, or — if the gap itself is structural (e.g., GitHub API refusing to move the card) — it leaves the assignee in place and writes a halt comment so the runner's "no progress for 3 ticks" gate can fire deterministically.
