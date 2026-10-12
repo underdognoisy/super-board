@@ -115,6 +115,7 @@ mode:   <auto-merge|human-approves>        truth gate: <off|non-trivial (≥N)|a
 │ <card lines with reason glyph>                                               │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌─ Done     [N] ───────────────────────────────────────────────────────────────┐
+│ ✅ <dragged, unmerged card lines — see §D>        (approved · merging)       │
 │ <collapsed line — see §D>                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -229,7 +230,7 @@ Inside a Kanban box, one line per issue:
 - **suffix** (right-justified):
   - In-flight rebuild: `↻ N/3` (from `loop:rebuild-N` label)
   - Blocked: `— <reason glyph> <short reason>` or `— gated on #N`
-- **Approve** cards print `🙋` as their glyph (a human merge decision: comment `done` or `changes:`).
+- **Approve** cards print `🙋` as their glyph (a human merge decision: drag to Done or comment `done`, or `changes:`).
 - A **Ready** card labelled `waits-on` prints `⏳` and the suffix `(waits-on)` — sequenced, not dispatched.
   - Otherwise: empty
 
@@ -239,6 +240,12 @@ Backlog and Done are **always one line** each. Backlog is tagged `(not started, 
 Done is **always one line** of issue numbers, newest first, no titles, tagged
 `(squash-merged, collapsed)`. Never expand Done card-by-card. If Done has more
 than ~12 issues at 80-col width, truncate with `… +N more` at the end.
+
+**Exception (v3.3.0): a Done card whose issue is still OPEN** was dragged there by
+a human to approve it and is not merged yet. It never joins the squash-merged
+line: it gets its own line above it, `✅ #N  <title>  (approved · merging)`. The
+box count `[N]` still counts every card in the column. When Done holds only such
+cards, there is no collapsed line and no `(empty)`.
 
 ### §E — Workers section format
 

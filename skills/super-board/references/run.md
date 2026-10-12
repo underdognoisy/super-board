@@ -74,6 +74,7 @@ The agent prompts carry a guard line, but the rule stands.
 ## Lanes and label routing
 
 One board shape (v3.2.0): Backlog · Ready · Building · QA · Review · Approve · Blocked · Done.
+Approve → Done by hand = approval (v3.3.0): the next wave merges it through the gate.
 Backlog is intake only; runs ignore it. `Approve` holds cards that passed review and wait on a
 human merge decision (merge gate exit 7 / 8). `Blocked` holds only real stops, each with one
 `blocked:<reason>` label (block-template.md → "Reason labels"). A sequenced card stays in `Ready`
@@ -504,11 +505,14 @@ on the base branch**.
           `human-gate: <money|auth|schema|size|default|policy> — <evidence>` line per
           hit. Card Review → **Approve** (not Blocked) with the 🙋 request: the fold names
           the category and evidence; the visible lines say "Review PR #<P>, or merge it
-          yourself." and "Comment `done` on this issue to approve and merge — or
-          `changes: <what>` to send it back." — no checkboxes; label `needs-you`,
-          `blocked-by: -`, no `blocked:*` label. A human merge moves the card to Done the
-          usual way; a `done` brings it back through `resume`, and the gate clears the
-          policy hold only with a verified trusted approval of the current request.
+          yourself." and "Drag this card to **Done** on the board, or comment `done`
+          here, to approve and merge — or `changes: <what>` to send it back." — no
+          checkboxes; label `needs-you`, `blocked-by: -`, no `blocked:*` label. A human
+          merge moves the card to Done the usual way; a `done` — or a drag to Done after
+          the request (v3.3.0) — brings it back through `resume`, and the gate clears the
+          policy hold only with a verified trusted approval of the current request: a
+          trusted `done` comment, or the orchestrator's `drag-approval:` record of a
+          verified drag, each bound to the request's head and scope.
      8 → 🙋 needs you. Stdout carries one `needs-you: <command>` line per human step
           (migration for an env outside `migrations.allowed_envs`, an allowed migrate
           command that failed, a `needs-you:` line in the PR body,
@@ -525,10 +529,17 @@ on the base branch**.
      6 needs a fresh review of a commit nobody has reviewed yet.
 ```
 
-**Ordering invariant.** `Done` means "merged" — or closed as not planned on purpose, with a 🤷
-comment (there is no Skipped column). If step 3 cannot be satisfied, the card goes to Blocked
-(`blocked:github` when GitHub refused, else `blocked:other`), never Done. Anything that reads the board — status, halt gate, the
-landed-work progress signal — depends on Done meaning the code is on the base branch.
+**Ordering invariant.** A lane moves a card to `Done` only when it is merged — or closed as not
+planned on purpose, with a 🤷 comment (there is no Skipped column). If step 3 cannot be satisfied,
+the card goes to Blocked (`blocked:github` when GitHub refused, else `blocked:other`), never Done.
+**One exception, made by a human (v3.3.0):** dragging a 🙋 card from Approve to Done approves it,
+so between that drag and the next wave a Done card can have its issue and PR still OPEN —
+"approved · merging", not merged. Everything that reads the board treats **Done = merged only
+when the issue is closed**: status shows an OPEN-issue Done card as `approved · merging`, the
+landed-work progress signal (`done_signature`) and the done conditions below skip it. The
+orchestrator moves it Done → Review at wave start (`resume`, `via: "drag"`); if the merge then
+fails it leaves Done by the usual gate exit routing (conflict → Ready `loop:rebase`, GitHub
+refused → Blocked `blocked:github`, head moved → Review).
 
 ## Commenting cadence (issue + PR, every lane)
 
@@ -710,8 +721,8 @@ usual template — and, per §4, a `blocked-by:` line and the `blocked:decision`
 ### The wave-start sweep
 
 Before planning any wave, `super-board-wave-plan.sh` reports these lists the orchestrator must act on
-**before** launching (the approval routes read the `Approve` column, plus any 🙋 card still in
-`Blocked` from before v3.2.0):
+**before** launching (the approval routes read the `Approve` column, any 🙋 card a human dragged to
+`Done` with its issue still open (v3.3.0), plus any 🙋 card still in `Blocked` from before v3.2.0):
 
 - **`sweep`** — `Blocked` cards whose blockers have all closed. Move each to `Ready`, remove the
   labels in `removeLabels` (its `blocked:*` reason), and comment naming what cleared it
@@ -722,6 +733,13 @@ Before planning any wave, `super-board-wave-plan.sh` reports these lists the orc
 - **`unlabelled`** — `Blocked` cards with no `blocked:<reason>` label (legacy, or a lane that
   skipped it). Add exactly one, mapped from the newest Block comment's reason tag
   (block-template.md → "Reason labels"); `blocked:other` when the tag is missing.
+- **`dragRefused`** — cards a human dragged to Done (issue and PR still open) that the planner did
+  NOT accept as approval: the drag predates the current request, the request was edited or
+  superseded, or (when GitHub exposes the move) a project workflow or untrusted actor made it.
+  Move each back to **Approve** and comment once
+  `[orchestrator] [report] ⚠️ drag to Done not taken as approval · <why>` /
+  ``Next: drag it to Done again, or comment `done` `` — once per drag (the card leaves Done, so
+  it is not reported again). It never merges.
 - **`staleDone`** — `Approve` cards whose trusted human commented `done` BEFORE the current
   request. It never approves. Post once, on the issue:
   ``[reviewer] [report] ⚠️ your `done` at <at> came before this request — comment `done` again to approve``,
@@ -732,12 +750,22 @@ Before planning any wave, `super-board-wave-plan.sh` reports these lists the orc
   the same once at start (`reclaim_stranded_building`).
 - **`resume`** — 🙋 `Approve` cards whose newest pinned request has a later `done`
   from a human with verified write, maintain or admin permission, for the current
-  PR head. Move each to **Review**; `needs-you:done` may be kept as a display label
-  only. Do not create or copy approval evidence. The Reviewer re-runs the gate,
+  PR head (`via: "comment"`) — or 🙋 cards a human **dragged to Done** after that
+  request, issue and PR still open (`via: "drag"`, v3.3.0). Move each to **Review**;
+  `needs-you:done` may be kept as a display label only. For a `via: "drag"` card,
+  move it Done → Review and post exactly
+  `[orchestrator] [report] ▶️ approved by drag to Done · back to Review for the merge`
+  with the entry's `record` line (`drag-approval: {…}`) as the LAST line, verbatim — it is
+  the evidence the merge gate re-verifies once the card has left Done (bound to the
+  request id, head and scope). Name `at` and `by` (or "actor not exposed by GitHub") in the
+  orchestrator report. Never write or edit a `drag-approval:` line yourself; post only
+  the planner's. Do not create or copy any other approval evidence. The Reviewer re-runs the gate,
   which independently checks the request, current policy/steps and head, verifies
   the build, and runs allowed migrations. New code or a newer request needs fresh
   human approval; a label or old bare comment cannot bypass that hold.
-- **`refreshApproval`** — a PR head changed while its card was still in `Approve`.
+- **`refreshApproval`** — a PR head changed while its card was still in `Approve` (or dragged to
+  Done: the drag's request is void — say so: `[orchestrator] [report] ↩️ head moved after the
+  request · drag void · back to Review`).
   Move it to **Review** and remove stale `needs-you:done` display labels. The Reviewer
   reviews the new code and lets the gate produce a new pinned request, then returns
   it to **Approve** for a fresh human reply. This is not an approved resume.
@@ -773,7 +801,8 @@ Different hash on the same card resets the counter — the bot recognizes that p
 The loop exits cleanly when:
 - All active-pipeline columns are empty; OR
 - Only Approve/Blocked/Done cards (and `waits-on` Ready cards with an open blocker) remain
-  (Backlog is not part of a run); OR
+  (Backlog is not part of a run) — and no Done card still has an OPEN issue: a card dragged to
+  Done is approved, not merged, and the next wave must merge it (v3.3.0); OR
 - A halt gate fires.
 
 ## Run manifest

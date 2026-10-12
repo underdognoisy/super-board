@@ -169,20 +169,34 @@ Repeat until a done condition or halt gate fires:
    cut off mid-lane. The legacy `claude-p` dispatcher does not run this guard.
 2. **Plan the wave** —
    `bash .claude/bin/super-board-wave-plan.sh --config <config-path>` →
-   The planner returns `cards`, `sweep`, `release`, `unlabelled`, `resume`, `changes`, `classify`,
-   `refreshApproval`, `staleDone`, `flag` and `stranded`. **Act on every list but `cards` BEFORE
-   launching** (run.md → "The wave-start sweep"). The approval lists (`resume`, `changes`,
-   `classify`, `refreshApproval`, `staleDone`) read the **`Approve`** column, plus any 🙋 card left
-   in `Blocked` from before v3.2.0 (`needs-you` label or 🙋 tag) — treat that one exactly like an
-   Approve card. Move every swept card to `Ready`, drop its `removeLabels` (the `blocked:*`
+   The planner returns `cards`, `sweep`, `release`, `unlabelled`, `resume`, `dragRefused`, `changes`,
+   `classify`, `refreshApproval`, `staleDone`, `flag` and `stranded`. **Act on every list but `cards`
+   BEFORE launching** (run.md → "The wave-start sweep"). The approval lists (`resume`, `changes`,
+   `classify`, `refreshApproval`, `staleDone`) read the **`Approve`** column, any 🙋 card a human
+   **dragged to `Done`** whose issue is still open (v3.3.0), plus any 🙋 card left in `Blocked` from
+   before v3.2.0 (`needs-you` label or 🙋 tag) — treat those exactly like an Approve card. Move every swept card to `Ready`, drop its `removeLabels` (the `blocked:*`
    reason), with a comment naming what cleared it. For every `release` card (a `waits-on` Ready
    card whose blocker closed) remove `waits-on` and comment once
    `[orchestrator] [report] ▶️ released · #<clearedBy> closed`. Give every `unlabelled` Blocked card
    one `blocked:<reason>` label from its Block comment's tag (block-template.md → "Reason labels").
    Move every `resume` card (verified human approval of the current pinned
-   request) Approve → `Review`; `needs-you:done` is display-only. Move `refreshApproval`
+   request) Approve → `Review`; `needs-you:done` is display-only. **A `resume` card with
+   `via: "drag"`** (the human dragged it Approve → Done after the request; the planner verified
+   Status Done, issue and PR open, the move after the newest trusted unedited request, request
+   head == PR head) moves **Done → `Review`** with exactly
+   `[orchestrator] [report] ▶️ approved by drag to Done · back to Review for the merge` and the
+   entry's `record` line (`drag-approval: {…}`) verbatim as the LAST line — the merge gate's
+   only evidence once the card has left Done. Record `at` and `by` in the orchestrator report
+   (`by: null` = GitHub did not expose the actor). Never compose or edit a `drag-approval:`
+   line; post only the planner's. The Reviewer merges it through the unchanged gate
+   (`--expect-head`). Move `refreshApproval`
    cards to `Review` solely to review the changed head and post a fresh human request;
-   clear their stale `needs-you:done` display labels. They have no approval to merge.
+   clear their stale `needs-you:done` display labels. They have no approval to merge (a card
+   dragged to Done whose head moved: comment
+   `[orchestrator] [report] ↩️ head moved after the request · drag void · back to Review`).
+   **`dragRefused` cards** — dragged to Done, PR still open, but NOT a valid approval (`why`
+   says which rule failed): move them back to `Approve` and comment once
+   `[orchestrator] [report] ⚠️ drag to Done not taken as approval · <why>`. Never merge them.
 
    **`staleDone` cards — a trusted human's `done` came BEFORE the current pinned request.** It is
    never approval (validate() accepts only a token after the request) and the card stays in
@@ -287,7 +301,8 @@ Repeat until a done condition or halt gate fires:
    first (Review → QA → Ready), cut to `max_workers` when it is set (0 or
    absent = no cap). `max_workers` is the GitHub-limit valve: step 5 lowers it
    after a wave that hit the hourly limit. If `cards` is empty and
-   Building/QA/Review counts are 0 → done. If empty but cards sit only in Approve,
+   Building/QA/Review counts are 0 and no `Done` card has an OPEN issue (a drag-approved card
+   is approved, not merged — v3.3.0) → done. If empty but cards sit only in Approve,
    Blocked, or Ready with `waits-on` → report and stop (Approve = the human's merge queue).
 3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
    then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
@@ -333,11 +348,15 @@ Repeat until a done condition or halt gate fires:
    ```
    A throttle hit adds one line: `🐢 GitHub hourly limit hit — max_workers 3 → 2 (config saved)`.
    Merged and bounced cards are counts, not lines — they need nobody. Every
-   `human-gate` card (now in Approve) gets a `🙋 #N Approve — comment done or changes:` line, and every
-   `blocked` card its reason label and owner: that is the human's queue. The workflow's
-   `columns` tally gives the counts. Never report a card as done that is not on the base branch.
+   `human-gate` card (now in Approve) gets a `🙋 #N Approve — drag to Done or comment done, or changes:`
+   line, and every `blocked` card its reason label and owner: that is the human's queue. Each
+   drag-approved card resumed this pass gets `▶️ #N approved by drag · <at> · <by or "actor not
+   exposed">`. The workflow's `columns` tally gives the counts: a lane only ever leaves a card in
+   Done after a confirmed merge, so `Done` there = merged — but a board count of Done is NOT
+   (a drag-approved card sits in Done with its issue open until merged). Never report a card as
+   done that is not on the base branch.
 7. **Halt gates** — stop with a report if: 3 consecutive waves made zero
-   progress (every card bounced/failed); block-rate exceeds
+   progress (every card bounced/failed — a human drag to Done is not progress; only a merge is); block-rate exceeds
    `block_rate_alert_pct` of initial Ready; or the user says stop. The halt
    note is four lines: `🛑 halted — <gate>` · the evidence (counts, the cards
    that kept bouncing) · what is left in flight or claimed · `Resume:

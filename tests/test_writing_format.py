@@ -202,7 +202,7 @@ def test_block_template_uses_the_header():
     assert "Reason tag:" in text, "super-board-deps.sh parses 'Reason tag:'"
 
 
-DONE_LINE = "Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back."
+DONE_LINE = "Drag this card to **Done** on the board, or comment `done` here, to approve and merge — or `changes: <what>` to send it back."
 
 
 def test_needs_you_comment_is_action_first():

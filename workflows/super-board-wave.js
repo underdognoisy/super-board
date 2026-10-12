@@ -123,7 +123,7 @@ const REVIEW_MEMORY = [
   // Truth-check brief is fixed (super-review → Adversarial mode); a hand-written one once made over-building blocking.
   `Truth-check sub-agents get the fixed brief from super-review → "Adversarial mode", verbatim. After collecting, reclass any Over-engineering Blocker to Should fix; it never decides merge or bounce.`,
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
-  `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): move the card to Approve (NOT Blocked) with the 🙋 request quoting its human-gate lines, label needs-you. No checkboxes: the request says "Comment \`done\` on this issue to approve and merge — or \`changes: <what>\` to send it back."`,
+  `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): move the card to Approve (NOT Blocked) with the 🙋 request quoting its human-gate lines, label needs-you. No checkboxes: the request says "Drag this card to **Done** on the board, or comment \`done\` here, to approve and merge — or \`changes: <what>\` to send it back."`,
   `Exit 8 = 🙋 needs you (migration for a DB the robot may not touch, failed migrate, declared human step): move the card to Approve with the 🙋 request, exact commands from its needs-you lines, label needs-you. Exit 3 = GitHub refused: Blocked, label blocked:github.`,
   `Return status=human-gate with column=Approve for exits 7 and 8.`,
 ]
@@ -362,7 +362,10 @@ const summary = results.filter(Boolean).map((r) => {
   }
 })
 // Where the wave left cards, by column — Approve is the human's merge queue,
-// Blocked the real stops (run-workflow.md → Report).
+// Blocked the real stops (run-workflow.md → Report). A lane leaves a card in
+// Done only after a confirmed merge, so `columns.Done` here = merged. The board's
+// Done column is NOT: since v3.3.0 a human may drag a 🙋 card there to approve
+// it, issue still open, until the next wave's Reviewer merges it.
 const columns = {}
 for (const s of summary) columns[s.column] = (columns[s.column] || 0) + 1
 log(`wave complete: ${summary.length} cards — ` +

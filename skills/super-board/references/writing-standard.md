@@ -376,10 +376,13 @@ Tables plus CAPS rules (NEVER / DON'T / ALWAYS). No prose paragraphs. The manage
 
 A 🙋 merge hold (card in Approve) has one canonical request comment on the linked issue (or on the PR
 when it has no linked issue). No checkboxes: ticking one is not a signal. It says
-"Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back." Copy the gate's `approval-request:` line verbatim into
+"Drag this card to **Done** on the board, or comment `done` here, to approve and merge — or `changes: <what>` to send it back." Copy the gate's `approval-request:` line verbatim into
 that comment; it pins the repository, PR, full head and policy/human-step scope.
 Other threads link to that request without repeating its machine lines. A trusted
-human replies `done` in that same thread. Labels are status display, never approval.
+human replies `done` in that same thread — or drags the card to Done on the board (v3.3.0); the
+orchestrator then posts `[orchestrator] [report] ▶️ approved by drag to Done · back to Review for the merge`
+with the planner's `drag-approval:` record as its last line, verbatim, never composed by hand.
+Labels are status display, never approval.
 Do not edit the request or approval comment; changed code or steps need a fresh request.
 A `done` that predates the request never counts; the human gets one notice
 (``[reviewer] [report] ⚠️ your `done` at <time> came before this request — comment `done` again to approve``,

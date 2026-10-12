@@ -347,17 +347,20 @@ two complete builds. In order, no shortcuts:
      review"; `default: "human"`). `schema` means destructive only (DROP / TRUNCATE / RENAME);
      an additive migration follows `migrations.allowed_envs`, and a live DB is always human.
      Card → **Approve** (not Blocked) with the 🙋 request: it quotes the gate's
-     `human-gate:` lines and says, with no checkboxes, "Comment `done` on this issue to
-     approve and merge — or `changes: <what>` to send it back." (or merge PR #<P> yourself;
-     the next wave re-runs the gate, which merges). Label `needs-you`, no `blocked:*` label.
+     `human-gate:` lines and says, with no checkboxes, "Drag this card to **Done** on the
+     board, or comment `done` here, to approve and merge — or `changes: <what>` to send it
+     back." (or merge PR #<P> yourself; the next wave re-runs the gate, which merges). Label
+     `needs-you`, no `blocked:*` label.
    - **Exit 8 — 🙋 needs you.** Migrations for a database outside
      `migrations.allowed_envs`, an allowed migrate command that failed, or a declared
      human-only step. Card → **Approve** with the 🙋 request
      (`block-template.md` → "🙋 Needs you"), the gate's `needs-you:` commands copied
      verbatim as plain lines (no checkboxes), label `needs-you`, `blocked-by: -`. After the human
-     comments `done` after the current pinned request, the next wave verifies their
-     permission and the head, then moves it to Review. Re-run the gate; labels do not
-     authorize it. For exits 7 and 8, copy `approval-request:` into the canonical
+     comments `done` after the current pinned request — or drags the card to Done after it
+     (v3.3.0) — the next wave verifies their permission (or the board move) and the head,
+     then moves it to Review. Re-run the gate; labels do not authorize it. A drag reaches
+     the gate as the orchestrator's `drag-approval:` record on the issue, bound to the same
+     request id, head and scope; `--expect-head` is unchanged. Never post that line yourself. For exits 7 and 8, copy `approval-request:` into the canonical
      issue block and link it from the PR (no duplicate request); see block-template.md.
      A trusted `done` posted BEFORE the current request never approves: say so once on the
      issue — ``[reviewer] [report] ⚠️ your `done` at <time> came before this request — comment `done` again to approve``,

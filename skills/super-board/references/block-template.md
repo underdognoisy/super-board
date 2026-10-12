@@ -114,16 +114,26 @@ closed as not planned (`gh issue close <N> --reason "not planned"`) and moves to
 | 🎨    | Pure design                 | no measurable AC; needs design pass first                                |
 | 👯    | Duplicate                   | pre-flight: a merged PR already delivers it, or an open PR / card is building it |
 | ⏳    | Sequenced                   | pre-flight: an open PR touches the same files — the card stays in **Ready** with `waits-on` (not a Block) |
-| 🙋    | Needs you (human-only step) | merge gate exit 7 (merge_policy: money/auth/schema/size — review and merge it, or comment `done` to approve) or exit 8: a migration for a DB the robot may not touch, an allowed migrate command failed, a `needs-you:` step in the PR body, `migrations.human_steps` — the card goes to **Approve**, not Blocked |
+| 🙋    | Needs you (human-only step) | merge gate exit 7 (merge_policy: money/auth/schema/size — review and merge it, or drag the card to Done / comment `done` to approve) or exit 8: a migration for a DB the robot may not touch, an allowed migrate command failed, a `needs-you:` step in the PR body, `migrations.human_steps` — the card goes to **Approve**, not Blocked |
 
 ## 🙋 Needs you — the Approve column
 
 Merge gate exits 7 and 8 move the card to **`Approve`** (v3.2.0; before, Blocked), tagged 🙋, with
 the `needs-you` label on the issue and the PR, and no `blocked:*` label. Exit 7: merge_policy routes
-the merge to a human — review and merge it yourself, or comment `done` to approve and let the next
-wave merge it. Exit 8: migrations against a database outside `migrations.allowed_envs`, an allowed
-migrate command that failed, a declared human step. The column only says where the human looks;
-approval is still the trusted, head-bound `done` below. Moving a card into Approve grants nothing.
+the merge to a human — review and merge it yourself, or approve it and let the next wave merge it:
+drag the card to **Done** on the board, or comment `done`. Exit 8: migrations against a database
+outside `migrations.allowed_envs`, an allowed migrate command that failed, a declared human step.
+The column only says where the human looks; approval is still head-bound and trusted. Moving a card
+INTO Approve grants nothing.
+
+**Drag to Done = approval (v3.3.0).** A project card cannot carry a button, so the board gesture
+is the approval: a card dragged Approve → Done after the request, issue and PR still open, with the
+request's head still the PR head, is approved exactly like a `done` comment — the planner reads the
+board, the orchestrator moves it Done → Review with a `drag-approval:` record, and the Reviewer
+merges through the gate. A standing `changes:` or an unanswered free-text comment still blocks it;
+a drag before the request, on an edited request, or after the head moved never approves (the card
+returns to Approve or Review with a comment saying why). Until it merges the card shows as
+`approved · merging`.
 
 What to do first, why folded away. **No checkboxes.** On 2026-10-12 the owner ticked
 `- [ ] Review and merge PR #18` and nothing happened: a ticked box is not a signal the board reads.
@@ -135,7 +145,7 @@ those human steps as well as the code.
 [reviewer] [blocker] 🙋 Your turn on #<N> — <title>
 Run `<exact command 1, copy-paste ready>` on the **<env>** database.
 <exact command 2, if any>
-Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back.
+Drag this card to **Done** on the board, or comment `done` here, to approve and merge — or `changes: <what>` to send it back.
 After a trusted human confirms this version, the next wave returns it to Review for verification.
 
 <details><summary>Why, and what I checked</summary>
@@ -153,7 +163,7 @@ Example (what the person sees on GitHub):
 
 > **🙋 Your turn on #812 — Add plan column**
 > Run `npx prisma migrate deploy` on the **live** database.
-> Comment `done` on this issue to approve and merge — or `changes: <what>` to send it back.
+> Drag this card to **Done** on the board, or comment `done` here, to approve and merge — or `changes: <what>` to send it back.
 >
 > After a trusted human confirms this version, the next wave returns it to Review for verification.
 > ▸ Why, and what I checked
