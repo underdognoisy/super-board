@@ -23,7 +23,9 @@
 #     item-id <issue>         print the card's project item id (cached)
 #     ids                     print {projectId, fieldId, options:{name:id}} (cached)
 #     items                   the whole board in `gh project item-list --format json` shape
-#                             ({items:[{id,status,labels,title,content:{type,number,title,url,repository}}],totalCount})
+#                             ({items:[{id,status,labels,title,content:{type,number,title,url,repository,state}}],totalCount})
+#                             content.state (Issue: OPEN|CLOSED) tells a merged Done card from one
+#                             dragged to Done and still awaiting its merge (v3.3.0)
 #
 # Owner/number/repo come from --config (project.owner, project.number,
 # repo.remote), else $BUILD_LOOP_OWNER / $BUILD_LOOP_PROJECT and the origin remote.
@@ -177,7 +179,7 @@ items() {  # whole board, gh item-list shape, ~1 point per 100 cards
         items(first:100, after:$endCursor){ totalCount pageInfo{ hasNextPage endCursor }
           nodes{ id fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue{ name } }
             content{ __typename
-              ... on Issue { number title url repository{ nameWithOwner } labels(first:30){ nodes{ name } } }
+              ... on Issue { number title url state repository{ nameWithOwner } labels(first:30){ nodes{ name } } }
               ... on PullRequest { number title url repository{ nameWithOwner } labels(first:30){ nodes{ name } } }
               ... on DraftIssue { title } } } } } } } }' \
       -F owner="$OWNER" -F number="$NUMBER") || return $?
@@ -191,7 +193,8 @@ items() {  # whole board, gh item-list shape, ~1 point per 100 cards
             content: ({ type: .content.__typename, title: .content.title }
                       + (if .content.__typename == "DraftIssue" then {} else
                           { number: .content.number, url: .content.url,
-                            repository: .content.repository.nameWithOwner } end)) }
+                            repository: .content.repository.nameWithOwner }
+                          + (if .content.state then { state: .content.state } else {} end) end)) }
           + (if .fieldValueByName.name then { status: .fieldValueByName.name } else {} end)
           + (if ((.content.labels.nodes // []) | length) > 0
              then { labels: [ .content.labels.nodes[].name ] } else {} end) ] as $items

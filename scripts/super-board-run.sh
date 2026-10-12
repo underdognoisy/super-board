@@ -414,8 +414,12 @@ done_signature() {
   # The set of cards that have LANDED, as a stable string. This — not lane
   # occupancy — is the run's definition of forward progress (issue #8).
   # A card deliberately dropped is closed and moved to Done too (v3.0.0: no Skipped column).
+  # v3.3.0: a card a human dragged to Done to APPROVE it sits there with its issue
+  # still OPEN until the next wave merges it — approved, not landed. It must not
+  # count as progress, or a drag would reset the runaway gate without a merge.
   echo "$PROJECT_ITEMS_JSON" | jq -r '
-    [.items[] | select(.status == "Done") | .content.number // empty]
+    [.items[] | select(.status == "Done" and (.content.state // "CLOSED") != "OPEN")
+     | .content.number // empty]
     | sort | @csv' 2>/dev/null || echo ""
 }
 

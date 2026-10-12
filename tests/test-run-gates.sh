@@ -79,6 +79,10 @@ PROJECT_ITEMS_JSON=$(board 1:Done 2:Blocked 3:Review)
 is "Blocked is not landed work" "1" "$(done_signature)"
 PROJECT_ITEMS_JSON=$(board 1:Review 2:QA 3:Ready)
 is "nothing landed → empty signature" "" "$(done_signature)"
+# v3.3.0: a card dragged to Done to approve it keeps an OPEN issue until the merge.
+PROJECT_ITEMS_JSON='{"items":[{"status":"Done","content":{"type":"Issue","number":1,"state":"CLOSED"}},
+  {"status":"Done","content":{"type":"Issue","number":2,"state":"OPEN"}}]}'
+is "a dragged, unmerged Done card is not landed work" "1" "$(done_signature)"
 
 echo
 echo "── card_lane (v3.0.0: a qa label skips Building)"

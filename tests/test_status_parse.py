@@ -358,6 +358,22 @@ def test_render_kanban_approve_and_waits_on() -> None:
     assert all(sbs.visual_width(l) == 80 for l in out.splitlines()), "every box line is 80 cols"
 
 
+def test_render_kanban_done_shows_dragged_cards_as_approved_merging() -> None:
+    """v3.3.0: an OPEN issue in Done was dragged there to approve; it is not merged."""
+    by_status = {s: [] for s in sbs.BOARD_ORDER}
+    by_status["Done"] = [{"number": 21, "title": "dragged by the owner", "labels": [], "state": "OPEN"},
+                         {"number": 20, "title": "shipped", "labels": [], "state": "CLOSED"}]
+    out = sbs.render_kanban(by_status, lambda n: "  ", lambda n: "")
+    assert "✅ #21  dragged by the owner  (approved · merging)" in out, out
+    assert "#20   (squash-merged, collapsed)" in out
+    assert "#21 #20" not in out, "an approved card is never listed as squash-merged"
+    assert "┌─ Done     [2] " in out, "the Done count still counts every card in the column"
+    by_status["Done"] = by_status["Done"][:1]
+    out = sbs.render_kanban(by_status, lambda n: "  ", lambda n: "")
+    assert "(empty)" not in out.split("Done")[-1], "only approved cards: no (empty) line"
+    assert all(sbs.visual_width(l) == 80 for l in out.splitlines()), "every box line is 80 cols"
+
+
 def test_render_kanban_backlog_overflow_truncates() -> None:
     by_status = {s: [] for s in sbs.BOARD_ORDER}
     by_status["Backlog"] = [{"number": n, "title": "t", "labels": []} for n in range(200, 100, -1)]

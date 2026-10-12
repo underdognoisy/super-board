@@ -384,7 +384,7 @@ query($owner:String!, $number:Int!, $after:String) {
         items(first:100, after:$after) {
           pageInfo { endCursor hasNextPage }
           nodes {
-            content { ... on Issue { number title labels(first:20){nodes{name}} } }
+            content { ... on Issue { number title state labels(first:20){nodes{name}} } }
             fieldValues(first:8) {
               nodes { ... on ProjectV2ItemFieldSingleSelectValue {
                 name field { ... on ProjectV2SingleSelectField { name } } } }
@@ -437,9 +437,26 @@ def paginate_items(
 # ───────────────────────────── main ─────────────────────────────
 
 
+APPROVED_TAIL = "(approved · merging)"
+
+
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
-    """One line of issue numbers, newest first, `… +N more` past 76 cols."""
+    """One line of issue numbers, newest first, `… +N more` past 76 cols.
+
+    Done (v3.3.0): a card whose issue is still OPEN was dragged to Done to
+    approve it and merges next wave — it is NOT squash-merged, so it gets its
+    own line `✅ #N  title  (approved · merging)` above the collapsed line.
+    """
     out = [box_top(label, len(lane_items))]
+    if label == "Done":
+        approved = [x for x in lane_items if x.get("state") == "OPEN"]
+        lane_items = [x for x in lane_items if x.get("state") != "OPEN"]
+        for x in approved:
+            left = truncate_to(f"✅ #{x['number']}  {x['title']}", 76 - visual_width(APPROVED_TAIL) - 2)
+            out.append(box_line(left + "  " + APPROVED_TAIL))
+        if approved and not lane_items:
+            out.append(box_bot())
+            return "\n".join(out)
     if not lane_items:
         out.append(box_line("(empty)"))
     else:
@@ -564,6 +581,8 @@ def main() -> int:
                 if l.get("name")
             ],
             "status": field_status(n),
+            # OPEN on a Done card = dragged there to approve, not merged yet (v3.3.0).
+            "state": c.get("state") or "",
         })
 
     by_status: dict[str, list[dict[str, Any]]] = {
