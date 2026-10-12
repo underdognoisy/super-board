@@ -24,14 +24,65 @@ PREFIX = "approval-request: "
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 SCOPE = re.compile(r"[0-9a-f]{64}\Z")
 BLOCK = re.compile(r"Reason tag:[^\n]*🙋|^approval-request:", re.M)
-DONE = re.compile(r"\s*done[.!]?\s*\Z", re.I)
-CHANGES = re.compile(r"\s*changes\s*:\s*(\S.*)\Z", re.I | re.S)
+# The explicit APPROVAL tokens: done | approve(d) | merge (it). Each is an
+# unambiguous act, matched WHOLE-BODY (fullmatch) by trusted callers: "don't
+# merge", "merge after tests", "almost done", "merged already" all have extra
+# words and do NOT match. Casual thumbs-up tokens (lgtm, ship) are NOT approval
+# on purpose (owner ruling 2026-10-12): a bare "lgtm" plausibly rates the work
+# without intending the head-bound approval act. They land in classify, where
+# the orchestrator holds and asks — approve-adjacent is unsure, never a merge.
+DONE = re.compile(r"\s*(?:done|approved?|merge(?:\s+it)?)[.!]*\s*\Z", re.I)
+# `changes:` on ANY line of a trusted comment — humans write comments, not tokens,
+# so a preamble before the `changes:` line must not void the request. Still an
+# explicit, deterministic token (not inference); the trust check lives in the
+# callers. The merge signal (DONE) stays whole-body strict — missing it only
+# stalls (safe); matching `changes:` loosely at most bounces (also safe).
+CHANGES = re.compile(r"^[ \t]*changes[ \t]*:[ \t]*(\S.*?)[ \t]*$", re.I | re.M)
+# Machine-format board comments (`[role] [report]`, `[role] [blocker]`) are the
+# loop talking to itself. They post via the runner's PAT, so GitHub shows them as
+# a trusted User — author identity cannot separate them. They are never a human
+# signal: not a change request, not a classify candidate.
+MACHINE = re.compile(r"\s*\[[A-Za-z][\w-]*\]\s*\[[A-Za-z][\w-]*\]")
+# Orchestrator ack: `classified: 12, 14` machine line in a trusted comment names
+# classify-candidate comment ids already handled, so they stop re-surfacing
+# every wave. Suppression can only skip a re-handle, never cause a merge.
+ACK = re.compile(r"^[ \t]*classified[ \t]*:[ \t]*([0-9]+(?:[ \t]*,[ \t]*[0-9]+)*)[ \t]*$", re.I | re.M)
+# The newest `blocked-by:` line decides the human gate (same line
+# super-board-deps.sh reads); its own comment says WHY the gate exists.
+GATE_LINE = re.compile(r"^[ \t]*blocked-by[ \t]*:[ \t]*(.*?)[ \t]*$", re.I | re.M)
+NEEDS_TAG = re.compile(r"Reason tag:[^\n]*🙋")
+FENCE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+QUOTED = re.compile(r"^[ \t]{0,3}>")
 # GitHub populates closingIssuesReferences only for PRs into the default branch.
 # Boards whose base_branch is staging (the recommended setup) get an empty list, so
 # the card's own `Closes #N` line must link the issue too. Same-repo refs only; this
 # widens which comment threads are SCANNED, never who may authorize (validate() still
 # requires a trusted collaborator's pinned request matching this PR and head).
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#(\d+)", re.I)
+
+
+def author_text(body):
+    """The comment's own prose: fenced code blocks and `>`-quoted lines removed.
+
+    A deterministic signal (`changes:` on a line) must come from what the author
+    SAID, not from a log/YAML they pasted in a fence or a line they quoted —
+    a pasted `changes: 3 files` must never bounce a card. An unclosed fence
+    drops the rest of the body: conservative, the human can always re-comment.
+    """
+    out, fence = [], None
+    for line in body.splitlines():
+        stripped = line.strip()
+        if fence is not None:
+            if stripped.startswith(fence) and not stripped.strip(fence[0]):
+                fence = None
+            continue
+        if FENCE.match(line):
+            fence = stripped[0] * 3
+            continue
+        if QUOTED.match(line):
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def scope_for(plan):
@@ -84,7 +135,10 @@ def changes_request(comments, request_time, permission):
     """
     newest = None
     for comment in comments:
-        match = CHANGES.fullmatch(comment.get("body") or "")
+        body = comment.get("body") or ""
+        if MACHINE.match(body):
+            continue
+        match = CHANGES.search(author_text(body))
         if not match or not comment.get("id"):
             continue
         created = timestamp(comment.get("created_at"))
@@ -97,6 +151,92 @@ def changes_request(comments, request_time, permission):
                 newest = {"time": created, "by": author["login"],
                           "note": match.group(1).strip()[:2000], "id": comment.get("id")}
     return newest
+
+
+def classify_candidates(comments, request_time, permission):
+    """Trusted HUMAN comments after the pinned request that carry intent the
+    deterministic signals do not: not a bare `done` (that is the explicit, SHA-
+    bound approval), not an explicit `changes:` line (that is the regex fast
+    path), not a machine block (approval request / reviewer blocker).
+
+    These are the free-text comments the orchestrator must CLASSIFY into a small,
+    SAFE action set — changes / spinoff / discussion / hold-and-ask — so a human
+    need not write a perfect token. Classification can only ever bounce, spin off
+    a ticket, or pause; it can NEVER cause a merge, so (unlike approval) an EDITED
+    comment is allowed here: the tamper guard protects the merge path, not this.
+    An EDITED `changes:` comment surfaces here flagged `edited` (the tamper guard
+    keeps it out of the deterministic route; silently dropping it would be
+    invisible). Machine-format `[role] [label]` comments are the board's own
+    output and never surface — otherwise every wave would re-classify its own
+    reports forever. Ids acked by a trusted `classified:` line are done, skipped.
+    Oldest-first, so the orchestrator reads them in the order the human wrote them.
+    """
+    acked = acked_ids(comments, permission)
+    out = []
+    for comment in comments:
+        body = comment.get("body") or ""
+        if not comment.get("id") or not body.strip() or comment.get("id") in acked:
+            continue
+        if BLOCK.search(body) or DONE.fullmatch(body) or MACHINE.match(body):
+            continue
+        try:
+            created = timestamp(comment.get("created_at"))
+            edited = timestamp(comment.get("updated_at")) != created
+        except (ValueError, TypeError):
+            continue
+        if created <= request_time:
+            continue
+        if CHANGES.search(author_text(body)) and not edited:
+            continue  # the unedited changes: fast path owns it (changes_request)
+        author = comment.get("user") or {}
+        if (author.get("type") == "User" and author.get("login")
+                and permission(author["login"]) in ("write", "maintain", "admin")):
+            out.append({"by": author["login"], "id": comment.get("id"),
+                        "at": comment.get("created_at"), "edited": edited,
+                        "body": body.strip()[:2000]})
+    out.sort(key=lambda c: c["at"])
+    return out
+
+
+def acked_ids(comments, permission):
+    """Classify-candidate ids a trusted comment has acked via `classified: …`.
+
+    The orchestrator ends each handling report with that machine line; without
+    it the same comment re-surfaces every wave (held ON PURPOSE for `unsure`).
+    Bot authors are accepted — reports post via the runner identity — because
+    suppression can only ever skip a re-handle or hold, never authorize a merge.
+    """
+    out = set()
+    for comment in comments:
+        hits = ACK.findall(author_text(comment.get("body") or ""))
+        if not hits:
+            continue
+        author = comment.get("user") or {}
+        if (author.get("type") in ("User", "Bot") and author.get("login")
+                and permission(author["login"]) in ("write", "maintain", "admin")):
+            for hit in hits:
+                out.update(int(x) for x in re.split(r"[ \t]*,[ \t]*", hit))
+    return out
+
+
+def approval_hold(comments, trusted):
+    """True only when the comment that SET the human gate — the newest
+    `blocked-by:` line, the same line super-board-deps.sh reads — is the merge
+    gate's 🙋 approval hold: a TRUSTED block comment carrying the 🙋 reason tag
+    with `blocked-by: -`. Credentials / permissions / billing / design /
+    product-ruling holds (🔐 🔑 💳 🎨 🧑) never match: those still wait for a
+    person to move the card, whatever else gets commented.
+    """
+    source = None
+    for comment in comments:
+        if GATE_LINE.search(comment.get("body") or ""):
+            source = comment
+    if source is None:
+        return False
+    body = source.get("body") or ""
+    value = re.sub(r"[ \t]", "", GATE_LINE.findall(body)[-1])
+    return (value in ("-", "") and bool(NEEDS_TAG.search(body))
+            and any(c.get("id") == source.get("id") for c in trusted))
 
 
 def trusted_blocks(comments, permission):
@@ -156,6 +296,55 @@ def validate(comments, expected, permission):
         return hold("waiting for a trusted human to comment done on the current request")
     except (ValueError, TypeError, KeyError):
         return hold("approval evidence is incomplete or unreadable")
+
+
+def enrich_entry(entry, github):
+    """Enrich one dependency-graph entry with the verified human signals."""
+    entry["needsYouDone"] = False
+    entry["approvalRefresh"] = False
+    entry["changesRequested"] = None
+    entry["classify"] = []
+    if not entry.get("needsYou") or github is None:
+        return
+    try:
+        comments = github.comments(entry["number"])
+        blocks = trusted_blocks(comments, github.permission)
+        latest = max(blocks, key=lambda c: timestamp(c.get("created_at"))) if blocks else {}
+        request = parse_request(latest)
+        if request is None or request["repo"] != github.repo:
+            return
+        result = github.check(request["pr"], head=request["head"], issue=entry["number"])
+        entry["needsYouDone"] = result["approved"]
+        entry["approvalRefresh"] = result.get("headChanged", False)
+        entry["approvalWhy"] = result["why"]
+        request_time = timestamp(latest.get("created_at"))
+        change = changes_request(comments, request_time, github.permission)
+        if change is not None:
+            entry["needsYouDone"] = False
+            entry["changesRequested"] = {"by": change["by"], "note": change["note"]}
+            entry["approvalWhy"] = "human requested changes; bounce, rebuild, fresh request"
+            # A VERIFIED trusted human asked for changes. That frees the human
+            # gate ONLY when the gate itself is the merge gate's 🙋 approval
+            # hold (approval_hold keys on the gate-setting comment's reason
+            # tag): the person the hold waited for has moved it, so the bounced
+            # card is runnable for the rebuild. A 🔐/🔑/💳/🎨/🧑 gate — the
+            # deps.sh "only a person moves it" contract — is never cleared
+            # here. Trust-bound, never label-driven; open blockers still gate.
+            if entry.get("humanGated") and approval_hold(comments, blocks):
+                entry["humanGated"] = False
+                entry["runnable"] = (bool(entry.get("parseable"))
+                                     and len(entry.get("openBlockers") or []) == 0)
+        # Free-text human comments after the request the orchestrator must
+        # classify (changes / spinoff / discussion / hold). Never a merge.
+        entry["classify"] = classify_candidates(comments, request_time, github.permission)
+        if entry["classify"] and entry["needsYouDone"]:
+            # A standing unclassified human comment supersedes a bare `done`:
+            # resume holds until the orchestrator classifies and acks it
+            # (`classified: <ids>`). Holding only ever stalls — never merges.
+            entry["needsYouDone"] = False
+            entry["approvalWhy"] = "unclassified human comments stand; classify and ack them first"
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        entry["approvalWhy"] = "approval evidence could not be verified"
 
 
 class GitHub:
@@ -256,29 +445,7 @@ def main():
         graph = json.load(sys.stdin)
         github = GitHub(args.repo) if args.repo else None
         for entry in graph.values():
-            entry["needsYouDone"] = False
-            entry["approvalRefresh"] = False
-            entry["changesRequested"] = None
-            if not entry.get("needsYou") or github is None:
-                continue
-            try:
-                comments = github.comments(entry["number"])
-                blocks = trusted_blocks(comments, github.permission)
-                latest = max(blocks, key=lambda c: timestamp(c.get("created_at"))) if blocks else {}
-                request = parse_request(latest)
-                if request is None or request["repo"] != github.repo:
-                    continue
-                result = github.check(request["pr"], head=request["head"], issue=entry["number"])
-                entry["needsYouDone"] = result["approved"]
-                entry["approvalRefresh"] = result.get("headChanged", False)
-                entry["approvalWhy"] = result["why"]
-                change = changes_request(comments, timestamp(latest.get("created_at")), github.permission)
-                if change is not None:
-                    entry["needsYouDone"] = False
-                    entry["changesRequested"] = {"by": change["by"], "note": change["note"]}
-                    entry["approvalWhy"] = "human requested changes; bounce, rebuild, fresh request"
-            except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
-                entry["approvalWhy"] = "approval evidence could not be verified"
+            enrich_entry(entry, github)
         print(json.dumps(graph))
         return
     if not args.pr or not args.head or not args.plan:

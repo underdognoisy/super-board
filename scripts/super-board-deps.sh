@@ -56,7 +56,13 @@
 # `runnable` is true only when the line parses, no blocker is still open, AND the
 # card is not human-gated. `humanGated` comes from `blocked-by: -`, which means
 # "nothing on this board clears it" — credentials, permissions, a product ruling.
-# The sweep must never free one of those; only a person can.
+# The sweep must never free one of those; only a person can. ONE keyed exception,
+# applied by super-board-approval.py --deps (approval_hold): when the comment that
+# SET the gate — the newest `blocked-by: -` line — is the merge gate's own 🙋
+# approval hold (trusted block comment, `Reason tag: 🙋`), a VERIFIED trusted
+# human `changes:` after the pinned request IS that person moving it, so the
+# bounced card is made runnable for its rebuild. 🔐/🔑/💳/🎨/🧑 gates never
+# clear this way — they wait for a person to move the card.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

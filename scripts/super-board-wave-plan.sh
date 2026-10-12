@@ -70,6 +70,7 @@
 #     "sweep": [ {"number":37,"title":"…","clearedBy":[32]} ],
 #     "resume": [ {"number":51,"title":"…"} ],
 #     "changes": [ {"number":53,"title":"…","by":"<login>","note":"…"} ],
+#     "classify": [ {"number":54,"title":"…","comments":[{"by":"<login>","id":1,"at":"…","body":"…"}]} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ] }
@@ -170,6 +171,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       sweep: [ $all[]
                | select(.status == "Blocked")
                | select(free(.number))
+               | select((dep(.number).changesRequested // null) == null)
                | { number, title,
                    clearedBy: (dep(.number) | .blockers) } ],
 
@@ -190,6 +192,19 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                  | { number, title,
                      by: dep(.number).changesRequested.by,
                      note: dep(.number).changesRequested.note } ],
+
+      # Free-text human comments on a Blocked card that are neither a clean
+      # `done` nor an explicit `changes:` — the orchestrator classifies each
+      # (changes / spinoff / discussion / hold) and acts. Only when no
+      # deterministic signal already routes the card (changesRequested / resume),
+      # so the regex fast paths always win over classification.
+      classify: [ $all[]
+                  | select(.status == "Blocked")
+                  | select(dep(.number) != null
+                           and ((dep(.number).classify // []) | length) > 0
+                           and (dep(.number).changesRequested // null) == null
+                           and ((dep(.number).needsYouDone // false) | not))
+                  | { number, title, comments: dep(.number).classify } ],
 
       # Changed code while Blocked needs a new review/request, never approval.
       refreshApproval: [ $all[]
