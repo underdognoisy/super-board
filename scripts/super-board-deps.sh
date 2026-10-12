@@ -38,7 +38,7 @@
 # that does not have what it needs yet — one wave saved, one rewrite spent.
 #
 # Usage:
-#   super-board-deps.sh --repo <owner/name> [--issues 12,34] [--from <payload.json>]
+#   super-board-deps.sh --repo <owner/name> [--project <owner/number>] [--issues 12,34] [--from <payload.json>]
 #
 # Stdout, one object keyed by issue number:
 #   { "40": { "number": 40, "title": "…", "state": "OPEN",
@@ -51,6 +51,9 @@
 # `needsYouDone` — verified by super-board-approval.py: a trusted human replied
 # done after a pinned request for the current PR head. Labels are never authority.
 # Saved --from payloads stay offline and cannot assert verified human approval.
+# `--project` (v3.3.0) names the board so a 🙋 card dragged to Done can count as
+# approval: `approvedVia` "comment" | "drag", `drag` {at, by, record}, `prState`.
+# Without it the drag route is off and only a `done` comment approves.
 # A 🙋 card stays humanGated either way — only the resume path moves it.
 #
 # `runnable` is true only when the line parses, no blocker is still open, AND the
@@ -66,13 +69,14 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO=""; LIMIT="200"; ONLY=""; FROM=""
+REPO=""; LIMIT="200"; ONLY=""; FROM=""; PROJECT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)   REPO="$2"; shift 2 ;;
     --limit)  LIMIT="$2"; shift 2 ;;
     --issues) ONLY="$2"; shift 2 ;;
     --from)   FROM="$2"; shift 2 ;;   # a saved `gh issue list --json …` payload; tests use this
+    --project) PROJECT="$2"; shift 2 ;;  # owner/number — enables the drag-to-Done approval route
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
@@ -198,4 +202,4 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
           needsYouDone: false }
     ]
   | ( if $filter == null then . else map(select(.number as $n | $filter | index($n))) end )
-  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO"
+  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${PROJECT:+--project "$PROJECT"}

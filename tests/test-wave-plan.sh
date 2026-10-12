@@ -223,4 +223,55 @@ echo "$OUT25" | jq -e '[.release[].number] == []' >/dev/null || fail "a released
 echo "$OUTA" | jq -e '.sweep[] | select(.number == 52) | .removeLabels == ["blocked:other"]' >/dev/null \
   || fail "sweep must name the reason label to remove, got $(echo "$OUTA" | jq -c .sweep)"
 
-echo "PASS: test-wave-plan.sh (26 scenarios)"
+# 27–31 — drag to Done = approval (v3.3.0). The graph decides; the planner routes.
+DR_ITEMS=$(jq -n '{items: [
+  {status:"Done", labels:["needs-you"], content:{type:"Issue", number:60, title:"dragged, verified", assignees:[]}},
+  {status:"Done", content:{type:"Issue", number:61, title:"dragged, changes stand", assignees:[]}},
+  {status:"Done", content:{type:"Issue", number:62, title:"dragged, head moved", assignees:[]}},
+  {status:"Done", content:{type:"Issue", number:63, title:"dragged too early", assignees:[]}},
+  {status:"Done", content:{type:"Issue", number:64, title:"merged and closed", assignees:[]}},
+  {status:"Done", content:{type:"Issue", number:65, title:"PR merged, issue open", assignees:[]}},
+  {status:"Done", content:{type:"Issue", number:66, title:"dragged, unacked comment", assignees:[]}},
+  {status:"Approve", content:{type:"Issue", number:67, title:"comment approval", assignees:[]}}]}')
+DR_DEPS=$(jq -n '
+  def gate: {parseable:true, humanGated:true, runnable:false, blockers:[], openBlockers:[], needsYou:true,
+             needsYouDone:false, changesRequested:null, classify:[], approvalRefresh:false, staleDone:null,
+             prState:"OPEN", approvedVia:null, drag:null};
+  { "60": (gate | .needsYouDone = true | .approvedVia = "drag"
+                | .drag = {at:"2026-10-12T23:02:26Z", by:null, record:"drag-approval: {\"request\":1}"}),
+    "61": (gate | .changesRequested = {by:"john", note:"rename it"} | .humanGated = false | .runnable = true),
+    "62": (gate | .approvalRefresh = true | .approvalWhy = "PR head changed after review"),
+    "63": (gate | .approvalWhy = "the card reached Done before the current request; drag it again to approve"),
+    "65": (gate | .prState = "MERGED" | .approvalWhy = "PR is merged"),
+    "66": (gate | .classify = [{by:"john", id:8, at:"t", body:"wait, one question"}]),
+    "67": (gate | .needsYouDone = true | .approvedVia = "comment") }')
+OUTD=$("$PLAN" --config <(echo "$NOCAP") --items <(echo "$DR_ITEMS") --deps <(echo "$DR_DEPS"))
+dnums() { echo "$OUTD" | jq -c "[.$1[].number] | sort"; }
+
+# 27 — a verified drag resumes with via "drag" and the record line to post; a
+#      comment approval says via "comment".
+[ "$(dnums resume)" = "[60,67]" ] || fail "resume must hold the verified drag + the comment approval, got $(dnums resume)"
+echo "$OUTD" | jq -e '.resume[] | select(.number == 60) | .via == "drag" and (.record | startswith("drag-approval: ")) and .at == "2026-10-12T23:02:26Z"' >/dev/null \
+  || fail "a drag resume must carry via/at/record, got $(echo "$OUTD" | jq -c .resume)"
+echo "$OUTD" | jq -e '.resume[] | select(.number == 67) | .via == "comment"' >/dev/null || fail "comment approval must say via comment"
+
+# 28 — a standing changes: or an unacked classify comment blocks a drag; a moved
+#      head goes to refreshApproval (→ Review), never to resume.
+[ "$(dnums changes)" = "[61]" ]         || fail "changes must win over a drag, got $(dnums changes)"
+[ "$(dnums classify)" = "[66]" ]        || fail "an unacked comment holds a drag in classify, got $(dnums classify)"
+[ "$(dnums refreshApproval)" = "[62]" ] || fail "a moved head must refresh, got $(dnums refreshApproval)"
+
+# 29 — a drag the graph refused (PR still open) goes back to Approve with its why;
+#      cards another route owns are not double-routed.
+[ "$(dnums dragRefused)" = "[63]" ] || fail "only the too-early drag is refused, got $(dnums dragRefused)"
+echo "$OUTD" | jq -e '.dragRefused[0].why | test("before the current request")' >/dev/null || fail "dragRefused must carry the why"
+
+# 30 — a Done card with a closed issue or a merged PR is merged work, never an
+#      approval and never refused back to Approve.
+echo "$OUTD" | jq -e '[.resume[], .dragRefused[], .changes[], .classify[], .refreshApproval[] | .number] | (index(64) == null and index(65) == null)' >/dev/null \
+  || fail "merged Done cards must not be approval routes, got $OUTD"
+
+# 31 — Done cards are never dispatched or swept.
+echo "$OUTD" | jq -e '.cards == [] and .sweep == []' >/dev/null || fail "Done cards must not be dispatched, got $(echo "$OUTD" | jq -c '{cards,sweep}')"
+
+echo "PASS: test-wave-plan.sh (31 scenarios)"

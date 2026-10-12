@@ -82,8 +82,11 @@
 #      review" — or merge_policy.default "human"). Stdout lists each
 #      `human-gate: <category> — <evidence>`. Nothing ran, nothing merged; the
 #      card → Approve (v3.2.0; was Blocked) with the 🙋 request: the human reviews
-#      and merges it, or comments "done" after its pinned request to approve — the
-#      next wave re-runs the gate, which then skips the policy check and merges.
+#      and merges it, or comments "done" after its pinned request — or (v3.3.0)
+#      drags the card to Done — to approve; the next wave re-runs the gate, which
+#      then skips the policy check and merges. A drag reaches this gate as the
+#      orchestrator's `drag-approval:` record, bound to the same request id, head
+#      and scope (super-board-approval.py validate()); the head pin is unchanged.
 #   79 required GitHub evidence unavailable: local run halt; preserve card and
 #      approval state, stop dispatch, and explicitly restart after diagnosis.
 #   8  🙋 needs you — the PR has migrations for a database the robot may not

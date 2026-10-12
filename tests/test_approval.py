@@ -208,6 +208,174 @@ class ChangesRequestTests(unittest.TestCase):
         self.assertEqual(found["note"], "second")
 
 
+def board_page(status="Done", at="2026-10-03T00:00:30Z", state="OPEN", events=None, owner="x", number=1):
+    project = {"number": number, "owner": {"__typename": "User", "login": owner}}
+    return {"data": {"repository": {"issue": {"state": state,
+        "projectItems": {"nodes": [{"project": project,
+                                    "fieldValueByName": {"name": status, "updatedAt": at} if status else None}]},
+        "timelineItems": {"nodes": [dict(e, project=project) for e in (events or [])]}}}}}
+
+
+class DragApprovalTests(unittest.TestCase):
+    """v3.3.0: dragging a 🙋 card to Done approves — as strictly as `done`."""
+    def check(self, comments, drag=None, expected=None, permissions=None):
+        return approval.validate(comments, expected or REQUEST,
+                                 lambda login: (permissions or {"owner": "admin"}).get(login), drag=drag)
+
+    def request_only(self):
+        return evidence()[:1]
+
+    def drag(self, second=5, by=None, source=3):
+        return {"source": source, "at": f"2026-10-03T00:00:{second:02d}Z", "by": by}
+
+    def test_drag_after_request_approves_with_record(self):
+        result = self.check(self.request_only(), self.drag())
+        self.assertTrue(result["approved"])
+        self.assertEqual(result["via"], "drag")
+        record = approval.parse_drag_record(result["record"])
+        self.assertEqual((record["head"], record["request"], record["at"]), (HEAD, 1, "2026-10-03T00:00:05Z"))
+
+    def test_drag_needs_head_match(self):
+        self.assertFalse(self.check(self.request_only(), self.drag(), dict(REQUEST, head="b" * 40))["approved"])
+
+    def test_drag_before_request_is_not_approval(self):
+        self.assertFalse(self.check(self.request_only(), self.drag(second=0))["approved"])
+        self.assertFalse(self.check(self.request_only(), self.drag(second=1))["approved"])
+
+    def test_drag_needs_the_request_card_and_a_trusted_actor(self):
+        self.assertFalse(self.check(self.request_only(), self.drag(source=9))["approved"])
+        self.assertFalse(self.check(self.request_only(), self.drag(by="visitor"),
+                                    permissions={"owner": "admin", "visitor": "read"})["approved"])
+        self.assertTrue(self.check(self.request_only(), self.drag(by="owner"))["approved"])
+
+    def test_refused_board_evidence_holds(self):
+        result = self.check(self.request_only(), {"refused": "a project workflow moved the card"})
+        self.assertFalse(result["approved"])
+        self.assertIn("workflow", result["why"])
+
+    def test_drag_never_rescues_an_edited_or_superseded_request(self):
+        edited = self.request_only()
+        edited[0]["updated_at"] = "2026-10-03T00:00:03Z"
+        self.assertFalse(self.check(edited, self.drag())["approved"])
+        newer = self.request_only() + [comment("Reason tag: 🙋 a new decision", 7)]
+        self.assertFalse(self.check(newer, self.drag())["approved"])
+
+    def record_comment(self, second=6, request_id=1, at="2026-10-03T00:00:05Z", **override):
+        line = approval.drag_record(dict(REQUEST, **override), request_id, at, None)
+        return comment("[orchestrator] [report] ▶️ approved by drag to Done · back to Review for the merge\n" + line, second)
+
+    def test_merge_gate_accepts_recorded_drag_with_head_match(self):
+        result = self.check(self.request_only() + [self.record_comment()])
+        self.assertTrue(result["approved"])
+        self.assertEqual(result["via"], "drag")
+        bot = self.record_comment()
+        bot["user"]["type"] = "Bot"
+        self.assertTrue(self.check(self.request_only() + [bot])["approved"])
+
+    def test_recorded_drag_is_head_and_request_bound(self):
+        base = self.request_only()
+        self.assertFalse(self.check(base + [self.record_comment()], expected=dict(REQUEST, head="b" * 40))["approved"])
+        self.assertFalse(self.check(base + [self.record_comment(head="b" * 40)])["approved"])
+        self.assertFalse(self.check(base + [self.record_comment(request_id=99)])["approved"])
+        self.assertFalse(self.check(base + [self.record_comment(at="2026-10-03T00:00:00Z")])["approved"])
+        self.assertFalse(self.check(base + [self.record_comment(at="2026-10-03T00:00:09Z")])["approved"])
+        edited = self.record_comment()
+        edited["updated_at"] = "2026-10-03T00:00:40Z"
+        self.assertFalse(self.check(base + [edited])["approved"])
+        self.assertFalse(self.check(base + [self.record_comment()], permissions={"owner": "read"})["approved"])
+
+    def test_quoted_or_fenced_record_is_not_a_record(self):
+        rec = self.record_comment()
+        rec["body"] = "> " + rec["body"].splitlines()[1]
+        self.assertFalse(self.check(self.request_only() + [rec])["approved"])
+
+
+class DragGitHubTests(unittest.TestCase):
+    def setUp(self):
+        self.github = approval.GitHub("x/y", "X/1")
+        self.head = HEAD
+        self.pr_state = "OPEN"
+        self.board = board_page()
+        self.records = evidence()[:1]
+        self.calls = []
+        def read(*args):
+            self.calls.append(args)
+            if any("projectItems" in a for a in args):
+                return self.board
+            if "graphql" in args:
+                return [{"data": {"repository": {"pullRequest": {"headRefOid": self.head, "state": self.pr_state,
+                    "closingIssuesReferences": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"number": 3, "repository": {"nameWithOwner": "x/y"}}]}}}}}]
+            if "collaborators" in args[-1]:
+                return {"permission": "admin"}
+            if "/issues/3/" in args[-1]:
+                return [self.records]
+            if "/issues/9/" in args[-1]:
+                return [[]]
+            raise AssertionError(args)
+        self.github.read = read
+
+    def entry(self):
+        entry = {"number": 3, "needsYou": True, "humanGated": True}
+        approval.enrich_entry(entry, self.github)
+        return entry
+
+    def test_drag_resumes_only_with_matching_head(self):
+        entry = self.entry()
+        self.assertTrue(entry["needsYouDone"])
+        self.assertEqual(entry["approvedVia"], "drag")
+        self.assertTrue(entry["drag"]["record"].startswith("drag-approval: "))
+        self.head = "b" * 40
+        entry = self.entry()
+        self.assertFalse(entry["needsYouDone"])
+        self.assertTrue(entry["approvalRefresh"], "a moved head goes back to Review, never to the merge")
+
+    def test_comment_route_does_not_read_the_board(self):
+        self.records = evidence()
+        self.assertEqual(self.entry()["approvedVia"], "comment")
+        self.assertFalse(any(any("projectItems" in a for a in c) for c in self.calls))
+
+    def test_not_done_closed_issue_or_other_board_is_no_drag(self):
+        for page in (board_page(status="Approve"), board_page(state="CLOSED"), board_page(number=2),
+                     board_page(owner="someone"), board_page(status=None)):
+            self.board = page
+            self.assertFalse(self.entry()["needsYouDone"], page)
+
+    def test_merged_or_closed_pr_is_never_a_drag_approval(self):
+        for state in ("MERGED", "CLOSED"):
+            self.pr_state = state
+            entry = self.entry()
+            self.assertFalse(entry["needsYouDone"])
+            self.assertEqual(entry["prState"], state)
+
+    def test_standing_changes_or_unacked_classify_blocks_a_drag(self):
+        self.records = evidence()[:1] + [comment("changes: rename it", 4)]
+        entry = self.entry()
+        self.assertFalse(entry["needsYouDone"])
+        self.assertEqual(entry["changesRequested"]["note"], "rename it")
+        self.records = evidence()[:1] + [comment("hmm, is the copy final?", 4)]
+        entry = self.entry()
+        self.assertFalse(entry["needsYouDone"])
+        self.assertIsNone(entry["drag"])
+        self.assertEqual(len(entry["classify"]), 1)
+
+    def test_timeline_events_name_the_actor_and_refuse_automation(self):
+        event = {"createdAt": "2026-10-03T00:00:20Z", "status": "Done", "wasAutomated": False,
+                 "actor": {"__typename": "User", "login": "owner"}}
+        self.board = board_page(events=[event])
+        entry = self.entry()
+        self.assertTrue(entry["needsYouDone"])
+        self.assertEqual((entry["drag"]["by"], entry["drag"]["at"]), ("owner", "2026-10-03T00:00:20Z"))
+        for bad in ({"wasAutomated": True}, {"actor": {"__typename": "Bot", "login": "app"}},
+                    {"status": "Review"}, {"createdAt": "2026-10-03T00:00:00Z"}):
+            self.board = board_page(events=[dict(event, **bad)])
+            self.assertFalse(self.entry()["needsYouDone"], bad)
+
+    def test_no_project_configured_means_no_drag_route(self):
+        self.github.project = None
+        self.assertFalse(self.entry()["needsYouDone"])
+
+
 class DependencyIntegrationTests(unittest.TestCase):
     def test_live_planner_resume_requires_current_trusted_request(self):
         with tempfile.TemporaryDirectory() as td:
@@ -226,6 +394,8 @@ f=json.load(open(os.environ["APPROVAL_FIXTURE"]))
 args=" ".join(sys.argv[1:])
 if "issues(states:OPEN" in args:
     out=[{"data":{"repository":{"issues":{"nodes":[f["issue"]],"pageInfo":{"hasNextPage":False,"endCursor":None}}}}}]
+elif "projectItems" in args:
+    out=f["board"]
 elif "graphql" in args:
     out=[{"data":{"repository":{"pullRequest":{"headRefOid":f["head"],"state":"OPEN","closingIssuesReferences":{"pageInfo":{"hasNextPage":False},"nodes":[{"number":3,"repository":{"nameWithOwner":"x/y"}}]}}}}}]
 elif "/issues/3/comments" in args:
@@ -242,9 +412,9 @@ print(json.dumps(out))
 ''')
             stub.chmod(0o755)
             env = dict(os.environ, PATH=str(work) + os.pathsep + os.environ["PATH"], APPROVAL_FIXTURE=str(fixture_path), SB_GITHUB_RETRY_DELAY="0", SB_GITHUB_HALT_FILE=str(work / "halt.json"))
-            def deps():
+            def deps(*extra):
                 fixture_path.write_text(json.dumps(fixture))
-                run = subprocess.run([str(ROOT / "scripts/super-board-deps.sh"), "--repo", "x/y"], env=env,
+                run = subprocess.run([str(ROOT / "scripts/super-board-deps.sh"), "--repo", "x/y", *extra], env=env,
                                      capture_output=True, text=True, check=True)
                 return json.loads(run.stdout)["3"]
             self.assertTrue(deps()["needsYouDone"], "current approval resumes even after an outsider fake block")
@@ -254,6 +424,14 @@ print(json.dumps(out))
             fixture["head"] = HEAD
             fixture["records"].append(comment("Reason tag: 🙋 a new maintainer request", 4))
             self.assertFalse(deps()["needsYouDone"], "a newer maintainer request must block resume")
+            # Drag to Done through the real deps.sh → approval.py --project path.
+            fixture["records"] = evidence()[:1]
+            fixture["issue"]["comments"]["nodes"] = [{"body": c["body"]} for c in fixture["records"]]
+            fixture["board"] = board_page()
+            self.assertFalse(deps()["needsYouDone"], "without --project the drag route is off")
+            dragged = deps("--project", "x/1")
+            self.assertTrue(dragged["needsYouDone"], dragged)
+            self.assertEqual(dragged["approvedVia"], "drag")
 
 
 if __name__ == "__main__":

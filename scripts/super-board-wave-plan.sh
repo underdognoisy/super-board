@@ -76,6 +76,21 @@
 # skipped it) so the orchestrator can add one from the Block comment's tag.
 # `sweep` carries `removeLabels`: the reason labels to drop on the way to Ready.
 #
+# DRAG TO DONE (v3.3.0). GitHub Project cards cannot carry buttons, so the board
+# gesture itself approves: a human drags a 🙋 card from Approve to Done. A card
+# in Done whose issue is still OPEN and that carries the 🙋 request is read by
+# the approval routes exactly like an Approve card (`awaiting`). The graph
+# (deps.sh --project → super-board-approval.py) verified the drag: Status Done,
+# PR still OPEN, the move AFTER the newest trusted unedited request, request
+# head == PR head. Such a card is in `resume` with `via: "drag"` and the
+# `record` line the orchestrator posts when it moves the card Done → Review.
+# A standing `changes:` or unacked classify comment still blocks it — a drag
+# never overrides them — and a moved head lands in `refreshApproval` (→ Review).
+# A dragged card the graph refuses (moved before the request, edited request,
+# untrusted actor…) is in `dragRefused`: the orchestrator moves it back to
+# Approve and says why. Done therefore no longer always means merged: a Done
+# card with an OPEN issue is "approved · merging" until the next wave merges it.
+#
 # Usage:
 #   super-board-wave-plan.sh --config <config.json> [--items <project-items.json>]
 #                            [--deps <deps.json>]
@@ -88,7 +103,9 @@
 # Stdout:
 #   { "cards": [ {"number":10,"status":"Review","title":"…","lane":"review","labels":[]} ],
 #     "sweep": [ {"number":37,"title":"…","clearedBy":[32]} ],
-#     "resume": [ {"number":51,"title":"…"} ],
+#     "resume": [ {"number":51,"title":"…","via":"comment"},
+#                 {"number":58,"title":"…","via":"drag","at":"…","by":null,"record":"drag-approval: {…}"} ],
+#     "dragRefused": [ {"number":59,"title":"…","why":"…"} ],
 #     "changes": [ {"number":53,"title":"…","by":"<login>","note":"…"} ],
 #     "classify": [ {"number":54,"title":"…","comments":[{"by":"<login>","id":1,"at":"…","body":"…"}]} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
@@ -148,7 +165,7 @@ else
   HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   # A graph we cannot fetch is not a graph of zero blockers. Fail rather than
   # plan a wave that treats every card as free.
-  DEPS=$("$HERE/super-board-deps.sh" --repo "$REPO" --limit 300) || {
+  DEPS=$("$HERE/super-board-deps.sh" --repo "$REPO" --project "$OWNER/$NUMBER" --limit 300) || {
     rc=$?; echo "could not derive the dependency graph for ${REPO}" >&2; exit "$rc"; }
 fi
 
@@ -175,6 +192,12 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   def gated: .status == "Approve"
              or (.status == "Blocked" and ((dep(.number).needsYou // false)
                                            or (.labels | index("needs-you") != null)));
+  # A 🙋 card a human dragged to Done (v3.3.0). dep() exists only for OPEN
+  # issues, so a closed (merged) Done card is never one. Whether the drag
+  # counts is the graph verdict, never this test.
+  def dragged: .status == "Done" and dep(.number) != null
+               and ((dep(.number).needsYou // false) or (.labels | index("needs-you") != null));
+  def awaiting: gated or dragged;
   def reason_labels: [ .labels[] | select(startswith("blocked:")) ];
 
   [ .items[]
@@ -227,15 +250,33 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       # Reviewer independently rechecks it; labels are only UI state. A standing
       # human change request always excludes a card from resume.
       resume: [ $all[]
-                | select(gated)
+                | select(awaiting)
                 | select(dep(.number) != null and (dep(.number).needsYouDone // false))
                 | select((dep(.number).changesRequested // null) == null)
-                | { number, title } ],
+                | select(((dep(.number).classify // []) | length) == 0)
+                | { number, title }
+                  + if (dep(.number).approvedVia // "comment") == "drag"
+                    then { via: "drag", at: dep(.number).drag.at, by: dep(.number).drag.by,
+                           record: dep(.number).drag.record }
+                    else { via: "comment" } end ],
+
+      # A card dragged to Done the graph did NOT accept as approval, with the
+      # PR still open, and no other route already handling it. The
+      # orchestrator moves it back to Approve and comments the `why`.
+      dragRefused: [ $all[]
+                     | select(dragged)
+                     | dep(.number) as $d
+                     | select(($d.needsYouDone // false) | not)
+                     | select(($d.prState // "") == "OPEN")
+                     | select(($d.changesRequested // null) == null)
+                     | select((($d.classify // []) | length) == 0)
+                     | select(($d.approvalRefresh // false) | not)
+                     | { number, title, why: ($d.approvalWhy // "drag not verified") } ],
 
       # A trusted human commented `changes: …` after the pinned request. The
       # orchestrator bounces these to Ready (rebuild) and relays the points.
       changes: [ $all[]
-                 | select(gated)
+                 | select(awaiting)
                  | select(dep(.number) != null and (dep(.number).changesRequested // null) != null)
                  | { number, title,
                      by: dep(.number).changesRequested.by,
@@ -247,7 +288,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       # deterministic signal already routes the card (changesRequested / resume),
       # so the regex fast paths always win over classification.
       classify: [ $all[]
-                  | select(gated)
+                  | select(awaiting)
                   | select(dep(.number) != null
                            and ((dep(.number).classify // []) | length) > 0
                            and (dep(.number).changesRequested // null) == null
@@ -256,7 +297,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
       # Changed code while Blocked needs a new review/request, never approval.
       refreshApproval: [ $all[]
-                         | select(gated)
+                         | select(awaiting)
                          | select(dep(.number).approvalRefresh // false)
                          | { number, title, why: dep(.number).approvalWhy } ],
 
@@ -264,7 +305,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       # approval; the orchestrator tells the human once (machine line
       # `stale-done: <id>` dedups the notice).
       staleDone: [ $all[]
-                   | select(gated)
+                   | select(awaiting)
                    | select((dep(.number).staleDone // null) != null)
                    | { number, title, by: dep(.number).staleDone.by,
                        id: dep(.number).staleDone.id, at: dep(.number).staleDone.at } ],

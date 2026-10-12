@@ -372,6 +372,35 @@ grep -q '^pr merge' "$GH_LOG" && fail "stale approval after verification must no
 unset STUB_APPROVAL STUB_COMMENTS STUB_VERIFIED
 teardown
 
+# 16c-drag (v3.3.0) — a drag to Done, recorded by the orchestrator's
+# `drag-approval:` machine line, clears the policy hold ONLY for the request id
+# and head it names. The card has left Done by now; the record is the evidence.
+head_setup
+export STUB_APPROVAL=1 STUB_COMMENTS="$TMP/comments.json"
+echo '[[]]' > "$STUB_COMMENTS"
+OUT=$(STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" 2>/dev/null || true)
+REQUEST=$(echo "$OUT" | sed -n 's/^approval-request: //p')
+make_drag() {  # $1 = head the record names, $2 = request id it names, $3 = author type
+  jq -n --argjson request "$REQUEST" --arg head "$1" --argjson rid "$2" --arg type "$3" '[[
+    {id:1,body:("Reason tag: 🙋 needs you\napproval-request: " + ($request|tojson)),created_at:"2026-10-03T00:00:01Z",updated_at:"2026-10-03T00:00:01Z",user:{login:"owner",type:"User"}},
+    {id:2,body:("[orchestrator] [report] ▶️ approved by drag to Done · back to Review for the merge\ndrag-approval: " + (($request + {head:$head, request:$rid, at:"2026-10-03T00:00:02Z", by:null})|tojson)),
+     created_at:"2026-10-03T00:00:03Z",updated_at:"2026-10-03T00:00:03Z",user:{login:"owner",type:$type}}
+  ]]' > "$STUB_COMMENTS"
+}
+make_drag "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" 1 User; : > "$GH_LOG"
+RC=0; STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" >/dev/null 2>&1 || RC=$?
+[ "$RC" -eq 7 ] || fail "a drag record for another head must hold, got $RC"
+grep -q '^pr merge' "$GH_LOG" && fail "a drag record for another head must never reach merge"
+make_drag "$SHA" 9 User; : > "$GH_LOG"
+RC=0; STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" >/dev/null 2>&1 || RC=$?
+[ "$RC" -eq 7 ] || fail "a drag record naming another request must hold, got $RC"
+make_drag "$SHA" 1 Bot; : > "$GH_LOG"
+RC=0; STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" >/dev/null 2>&1 || RC=$?
+[ "$RC" -eq 0 ] || fail "a drag record for the current request and head must merge, got $RC"
+grep -q '^pr merge' "$GH_LOG" || fail "the drag approval must reach the merge"
+unset STUB_APPROVAL STUB_COMMENTS
+teardown
+
 # 16d — head-bound approval also covers a declared human-only command; label
 # changes cannot grant it, and a later human request during verification revokes it.
 head_setup

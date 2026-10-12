@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 """Read-only, head-bound human approval shared by the planner and merge gate.
 
-A trusted request pins the code and human steps BEFORE a human replies `done`.
-Labels only describe UI state. They never authorize a merge. No GitHub writes.
+A trusted request pins the code and human steps BEFORE a human replies `done` —
+or, since v3.3.0, drags the card from Approve to Done on the board. Labels only
+describe UI state. They never authorize a merge. No GitHub writes.
+
+DRAG TO DONE (v3.3.0). The planner reads the card's live board evidence: the
+Status field value is `Done`, the issue and PR are still OPEN, and the Status
+value changed AFTER the pinned request (its `updatedAt`; or, when GitHub exposes
+them, the newest `ProjectV2ItemStatusChangedEvent`, which also names the actor
+and whether a project workflow made the move). The same validate() rules apply as
+for a `done` comment: the newest trusted request, unedited, covering the current
+head. The orchestrator then moves the card Done → Review and posts the planner's
+deterministic `drag-approval: {…}` machine line, so the merge gate — which runs
+after the card has left Done — can re-verify the approval bound to the same
+request id, head and scope. That line is an attestation of a board read the
+planner made, not a human act: see RELEASE-NOTES v3.3.0 for the trust caveat.
 """
 from __future__ import annotations
 
@@ -51,6 +64,11 @@ ACK = re.compile(r"^[ \t]*classified[ \t]*:[ \t]*([0-9]+(?:[ \t]*,[ \t]*[0-9]+)*
 # pre-request `done` the human was already told about, so the notice posts once.
 # Like the ack, it can only suppress a repeat notice — never approve anything.
 STALE_ACK = re.compile(r"^[ \t]*stale-done[ \t]*:[ \t]*([0-9]+(?:[ \t]*,[ \t]*[0-9]+)*)[ \t]*$", re.I | re.M)
+# Drag record: the orchestrator's machine line after a VERIFIED drag to Done
+# (planner `resume[].record`, built by drag_record()). It binds the request id,
+# head and scope, so the merge gate can re-verify after the card left Done.
+DRAG_LINE = re.compile(r"^[ \t]*drag-approval:[ \t]*(\{.*\})[ \t]*$", re.M)
+DRAG_PREFIX = "drag-approval: "
 # The newest `blocked-by:` line decides the human gate (same line
 # super-board-deps.sh reads); its own comment says WHY the gate exists.
 GATE_LINE = re.compile(r"^[ \t]*blocked-by[ \t]*:[ \t]*(.*?)[ \t]*$", re.I | re.M)
@@ -295,8 +313,38 @@ def trusted_blocks(comments, permission):
     return result
 
 
-def validate(comments, expected, permission):
-    """Pure verdict; permission(login) is a current repository permission lookup."""
+def drag_record(request, request_id, at, by):
+    """The machine line the orchestrator posts after a verified drag to Done."""
+    value = dict(request, request=request_id, at=at, by=by)
+    return DRAG_PREFIX + json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def parse_drag_record(body):
+    hits = DRAG_LINE.findall(author_text(body or ""))
+    if len(hits) != 1:
+        return None
+    try:
+        value = json.loads(hits[0])
+    except ValueError:
+        return None
+    if (not isinstance(value, dict) or type(value.get("request")) is not int
+            or not isinstance(value.get("at"), str)
+            or (value.get("by") is not None and not isinstance(value.get("by"), str))):
+        return None
+    return value
+
+
+def validate(comments, expected, permission, drag=None):
+    """Pure verdict; permission(login) is a current repository permission lookup.
+
+    Approval is ONE of three acts after the newest trusted, unedited request
+    that covers the current head: a trusted human `done` comment (via
+    "comment"), live board evidence that the card was dragged to Done after the
+    request (`drag`, read by the planner — via "drag"), or the orchestrator's
+    `drag-approval:` record of that verified drag, bound to this request id,
+    head and scope (via "drag" — what the merge gate sees once the card has
+    moved Done → Review). Classification and free text never approve.
+    """
     def hold(why):
         return {"approved": False, "why": why}
 
@@ -333,9 +381,51 @@ def validate(comments, expected, permission):
             author = comment.get("user") or {}
             if (author.get("type") == "User" and author.get("login")
                     and permission(author["login"]) in ("write", "maintain", "admin")):
-                return {"approved": True, "why": "trusted human confirmed the current request",
+                return {"approved": True, "via": "comment",
+                        "why": "trusted human confirmed the current request",
                         "request": request, "requestId": request_comment.get("id"),
                         "approvalId": comment.get("id"), "approver": author["login"]}
+        if drag is not None:
+            # Live board evidence (planner only). A refusal reason from the
+            # board read is reported as-is; it never falls through to approval.
+            if drag.get("refused"):
+                return hold(drag["refused"])
+            if drag.get("source") != request_comment.get("source"):
+                return hold("the dragged card is not the card that carries the request")
+            moved = timestamp(drag.get("at"))
+            if moved <= latest_time:
+                return hold("the card reached Done before the current request; drag it again to approve")
+            if drag.get("by") is not None and permission(drag["by"]) not in ("write", "maintain", "admin"):
+                return hold("the move to Done was not made by a trusted collaborator")
+            return {"approved": True, "via": "drag",
+                    "why": "trusted request; card dragged to Done after it",
+                    "request": request, "requestId": request_comment.get("id"),
+                    "dragAt": drag["at"], "dragBy": drag.get("by"),
+                    "record": drag_record(request, request_comment.get("id"), drag["at"], drag.get("by"))}
+        for comment in comments:
+            record = parse_drag_record(comment.get("body"))
+            if (record is None or not comment.get("id")
+                    or comment.get("source") != request_comment.get("source")):
+                continue
+            created = timestamp(comment.get("created_at"))
+            if created <= latest_time or timestamp(comment.get("updated_at")) != created:
+                continue
+            if record.get("request") != request_comment.get("id"):
+                continue
+            if any(record.get(k) != request.get(k) for k in ("repo", "pr", "head", "scope")):
+                continue
+            moved = timestamp(record["at"])
+            if moved <= latest_time or moved > created:
+                continue
+            author = comment.get("user") or {}
+            # The record is posted by the run identity (a User PAT or a Bot app).
+            if (author.get("type") in ("User", "Bot") and author.get("login")
+                    and permission(author["login"]) in ("write", "maintain", "admin")):
+                return {"approved": True, "via": "drag",
+                        "why": "verified drag to Done recorded for the current request",
+                        "request": request, "requestId": request_comment.get("id"),
+                        "approvalId": comment.get("id"), "dragAt": record["at"],
+                        "dragBy": record.get("by")}
         return hold("waiting for a trusted human to comment done on the current request")
     except (ValueError, TypeError, KeyError):
         return hold("approval evidence is incomplete or unreadable")
@@ -348,6 +438,8 @@ def enrich_entry(entry, github):
     entry["changesRequested"] = None
     entry["classify"] = []
     entry["staleDone"] = None
+    entry["approvedVia"] = None
+    entry["drag"] = None
     if not entry.get("needsYou") or github is None:
         return
     try:
@@ -357,8 +449,21 @@ def enrich_entry(entry, github):
         request = parse_request(latest)
         if request is None or request["repo"] != github.repo:
             return
-        result = github.check(request["pr"], head=request["head"], issue=entry["number"])
+        try:
+            result = github.check(request["pr"], head=request["head"], issue=entry["number"], drag=True)
+        except PRNotOpen as closed:
+            # A merged or closed PR is never an approval — and a Done card whose
+            # PR merged is not a drag waiting to be refused (prState says so).
+            entry["prState"] = closed.state
+            entry["approvalWhy"] = f"PR is {closed.state.lower()}"
+            return
+        entry["prState"] = "OPEN"
         entry["needsYouDone"] = result["approved"]
+        if result["approved"]:
+            entry["approvedVia"] = result.get("via", "comment")
+            if entry["approvedVia"] == "drag":
+                entry["drag"] = {"at": result.get("dragAt"), "by": result.get("dragBy"),
+                                 "record": result.get("record")}
         entry["approvalRefresh"] = result.get("headChanged", False)
         entry["approvalWhy"] = result["why"]
         request_time = timestamp(latest.get("created_at"))
@@ -385,26 +490,54 @@ def enrich_entry(entry, github):
             # A `done` the human wrote BEFORE this request: never approval, but
             # tell them once (planner → `staleDone`, orchestrator posts notice).
             entry["staleDone"] = stale_done(comments, request_time, github.permission)
+        if not entry["needsYouDone"]:
+            entry["approvedVia"] = None
+            entry["drag"] = None
         if entry["classify"] and entry["needsYouDone"]:
             # A standing unclassified human comment supersedes a bare `done`:
             # resume holds until the orchestrator classifies and acks it
             # (`classified: <ids>`). Holding only ever stalls — never merges.
             entry["needsYouDone"] = False
+            entry["approvedVia"] = None
+            entry["drag"] = None
             entry["approvalWhy"] = "unclassified human comments stand; classify and ack them first"
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         entry["approvalWhy"] = "approval evidence could not be verified"
 
 
+class PRNotOpen(ValueError):
+    def __init__(self, state):
+        super().__init__("PR is not open")
+        self.state = state
+
+
+BOARD_QUERY = '''query($owner:String!,$repo:String!,$issue:Int!){
+  repository(owner:$owner,name:$repo){issue(number:$issue){state
+    projectItems(first:50){nodes{project{number owner{__typename ... on User{login} ... on Organization{login}}}
+      fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name updatedAt}}}}
+    timelineItems(last:50,itemTypes:[PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]){nodes{
+      ... on ProjectV2ItemStatusChangedEvent{createdAt status wasAutomated actor{__typename login}
+        project{number owner{__typename ... on User{login} ... on Organization{login}}}}}}}}}'''
+
+
 class GitHub:
-    def __init__(self, repo):
+    def __init__(self, repo, project=None):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
             raise ValueError("missing or invalid repository")
         self.repo = repo.lower()
         self.permissions = {}
+        # (owner, number) of the board; None disables the drag route entirely.
+        self.project = None
+        if project:
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+)/([0-9]+)", project)
+            if not match:
+                raise ValueError("invalid --project (owner/number)")
+            self.project = (match.group(1).lower(), int(match.group(2)))
 
     @staticmethod
     def read(*args):
-        kind = ("approval" if "graphql" in args else "comments" if "--paginate" in args
+        kind = ("board-item" if any("projectItems" in a for a in args)
+                else "approval" if "graphql" in args else "comments" if "--paginate" in args
                 else "permission" if args[-1].endswith("/permission") else "json")
         return github_read.read(list(args), kind)[1]
 
@@ -444,7 +577,7 @@ class GitHub:
                 raise ValueError("incomplete PR response")
             pr = page["data"]["repository"]["pullRequest"]
             if pr["state"] != "OPEN":
-                raise ValueError("PR is not open")
+                raise PRNotOpen(pr["state"])
             heads.add(pr["headRefOid"])
             links = pr["closingIssuesReferences"]
             for issue in links["nodes"]:
@@ -460,7 +593,56 @@ class GitHub:
             raise ValueError("unreadable PR head")
         return head, issues
 
-    def check(self, number, head=None, scope=None, issue=None):
+    def drag_evidence(self, issue):
+        """Live board evidence that `issue`'s card was dragged to Done, or None.
+
+        None = the card is not in Done on this board (nothing to judge). A dict
+        with `refused` = it IS in Done but the move cannot count. Otherwise
+        {source, at, by}: `at` from the newest status-change timeline event when
+        GitHub exposes them (it also names the actor and flags project-workflow
+        moves), else from the Status value's `updatedAt` with `by` unknown.
+        Verified 2026-10-12 on a user-owned board: timeline events came back
+        EMPTY, so `updatedAt` is what the planner actually reads there.
+        """
+        if self.project is None:
+            return None
+        owner, number = self.project
+        name_owner, name = self.repo.split("/")
+        page = self.read("api", "graphql", "-f", f"query={BOARD_QUERY}", "-F", f"owner={name_owner}",
+                         "-F", f"repo={name}", "-F", f"issue={issue}")
+        if page.get("errors"):
+            raise ValueError("incomplete board response")
+        node = page["data"]["repository"]["issue"]
+        if node["state"] != "OPEN":
+            return None
+
+        def ours(project):
+            project = project or {}
+            login = ((project.get("owner") or {}).get("login") or "").lower()
+            return project.get("number") == number and login == owner
+
+        items = [n for n in node["projectItems"]["nodes"] if ours(n.get("project"))]
+        if len(items) != 1:
+            return None
+        value = items[0].get("fieldValueByName") or {}
+        if value.get("name") != "Done":
+            return None
+        at, by = value.get("updatedAt"), None
+        events = [e for e in node["timelineItems"]["nodes"] if e and ours(e.get("project"))]
+        if events:
+            newest = max(events, key=lambda e: timestamp(e.get("createdAt")))
+            if newest.get("status") != "Done":
+                return {"refused": "board history disagrees with the Done status"}
+            if newest.get("wasAutomated"):
+                return {"refused": "a project workflow moved the card to Done, not a person"}
+            actor = newest.get("actor") or {}
+            if actor.get("__typename") != "User" or not actor.get("login"):
+                return {"refused": "the move to Done was not made by a person"}
+            at, by = newest.get("createdAt"), actor["login"]
+        timestamp(at)  # unreadable time → ValueError → no approval
+        return {"source": issue, "at": at, "by": by}
+
+    def check(self, number, head=None, scope=None, issue=None, drag=False):
         current_head, issues = self.pr(number)
         if issue is not None and issue not in issues:
             return {"approved": False, "why": "request issue is not linked to this PR"}
@@ -472,7 +654,14 @@ class GitHub:
         expected = {"repo": self.repo, "pr": number, "head": current_head}
         if scope is not None:
             expected["scope"] = scope
-        return validate(comments, expected, self.permission)
+        result = validate(comments, expected, self.permission)
+        if result["approved"] or not drag or issue is None or self.project is None:
+            return result
+        # No comment/record approval: read the board once for a drag to Done.
+        evidence = self.drag_evidence(issue)
+        if evidence is None:
+            return result
+        return validate(comments, expected, self.permission, drag=evidence)
 
 
 def main():
@@ -483,6 +672,7 @@ def main():
     ap.add_argument("--plan", help="JSON plan from merge-policy")
     ap.add_argument("--request", action="store_true", help="print a pinned request; no network or writes")
     ap.add_argument("--deps", action="store_true", help="enrich the dependency graph on stdin")
+    ap.add_argument("--project", help="owner/number of the board; enables the drag-to-Done route in --deps")
     args = ap.parse_args()
     if args.request:
         if not args.pr or not args.head or not SHA.fullmatch(args.head) or not args.plan:
@@ -491,7 +681,7 @@ def main():
         return
     if args.deps:
         graph = json.load(sys.stdin)
-        github = GitHub(args.repo) if args.repo else None
+        github = GitHub(args.repo, args.project) if args.repo else None
         for entry in graph.values():
             enrich_entry(entry, github)
         print(json.dumps(graph))

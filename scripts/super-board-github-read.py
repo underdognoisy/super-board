@@ -238,6 +238,11 @@ def validate(text, kind, meta=None):
             require(type(links['pageInfo']['hasNextPage']) is bool and links['pageInfo']['hasNextPage'] == (i < len(value) - 1), 'approval pagination incomplete')
             require(isinstance(links['nodes'], list), 'linked issues missing')
         require(len(heads) == 1, 'PR changed during approval read')
+    elif kind == 'board-item':
+        issue = value['data']['repository']['issue']
+        require(isinstance(issue, dict) and issue.get('state') in ('OPEN', 'CLOSED'), 'issue state missing')
+        require(isinstance(issue['projectItems']['nodes'], list), 'project items missing')
+        require(isinstance(issue['timelineItems']['nodes'], list), 'status history missing')
     elif kind == 'merge-state':
         require(value.get('state') in ('OPEN', 'CLOSED', 'MERGED') and re.fullmatch(r'[0-9a-f]{40}', value.get('headRefOid', '')), 'merge outcome unreadable')
         if value['state'] == 'MERGED':
@@ -318,7 +323,7 @@ def read(args, kind='json', meta=None, recovering=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--kind', choices=('json','scalar','issue-number','head','state','diff','metadata','items','issues','quota','projects','project','fields','status-field','permission','comments','approval','merge-state','body','dedupe','prs-open','prs-merged','issues-closed','issue','object','array'))
+    parser.add_argument('--kind', choices=('json','scalar','issue-number','head','state','diff','metadata','items','issues','quota','projects','project','fields','status-field','permission','comments','approval','board-item','merge-state','body','dedupe','prs-open','prs-merged','issues-closed','issue','object','array'))
     parser.add_argument('--meta')
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--halt', help='record an unresolved mutation outcome and stop; never retry it')
