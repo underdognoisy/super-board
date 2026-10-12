@@ -113,4 +113,19 @@ get 28 '.needsYouDone == false' || fail "#28: a 'done' before the 🙋 block mus
 get 26 '.runnable == false'     || fail "#26: done goes through resume, never the Ready sweep"
 get 2  '.needsYou == false and .needsYouDone == false' || fail "an ordinary card is not needsYou"
 
-echo "PASS: test-deps.sh (18 scenarios)"
+# 19 — v3.2.0 waits-on: a sequenced card stays in Ready, labelled waits-on, with
+#      a pre-flight comment ending `blocked-by: N`. The existing parser reads that
+#      line, so the card is not runnable while N is open and is once N closes.
+WAITS=$(jq -n '[
+  {number: 40, title: "waits", state: "OPEN", body: "## Blocked by\n\n- None.\n",
+   labels: {nodes: [{name: "waits-on"}]},
+   comments: {nodes: [{body: "[builder] [report] ⏳ waits on #41 · PR #7 touches src/a.ts\nblocked-by: 41"}]}},
+  {number: 41, title: "blocker", state: "OPEN", body: "## Blocked by\n\n- None.\n"}]')
+OUT19=$("$DEPS" --from <(echo "$WAITS"))
+echo "$OUT19" | jq -e '.["40"] | .blockers == [41] and .openBlockers == [41] and .runnable == false and .humanGated == false' >/dev/null \
+  || fail "#40 waits on open #41: $(echo "$OUT19" | jq -c '.["40"]')"
+OUT19b=$("$DEPS" --from <(echo "$WAITS" | jq '[.[0]]'))
+echo "$OUT19b" | jq -e '.["40"] | .openBlockers == [] and .runnable == true' >/dev/null \
+  || fail "#40 is free once #41 closes: $(echo "$OUT19b" | jq -c '.["40"]')"
+
+echo "PASS: test-deps.sh (19 scenarios)"
