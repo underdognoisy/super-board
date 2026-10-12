@@ -67,7 +67,7 @@ LANE_ROLE = {"build": "Builder ", "qa": "Tester  ", "review": "Reviewer"}
 # Board columns, left to right as they sit on the GitHub project. The kanban
 # prints in exactly this order. Backlog and Done collapse to one line of numbers.
 BOARD_ORDER: tuple[str, ...] = (
-    "Backlog", "Ready", "Building", "QA", "Review", "Blocked", "Done",
+    "Backlog", "Ready", "Building", "QA", "Review", "Approve", "Blocked", "Done",
 )
 COLLAPSED_TAIL = {"Backlog": "(not started, collapsed)", "Done": "(squash-merged, collapsed)"}
 
@@ -478,6 +478,13 @@ def render_kanban(
             n = it["number"]
             if label == "Blocked":
                 out.append(box_line(f"{reason_glyph_for(n)} #{n}  {it['title']}"))
+                continue
+            if label == "Approve":
+                # Waiting on a human merge decision (comment `done` or `changes:`).
+                out.append(box_line(f"🙋 #{n}  {it['title']}"))
+                continue
+            if label == "Ready" and "waits-on" in {str(x).lower() for x in it.get("labels") or []}:
+                out.append(box_line(f"⏳ #{n}  {it['title']}  (waits-on)"))
                 continue
             left = f"{glyph_for(n)} #{n}  {it['title']}"
             suffix = rebuild_suffix(it)

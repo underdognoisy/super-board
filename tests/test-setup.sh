@@ -70,7 +70,7 @@ B=$(echo "$OUT" | jq -r .backup)
   || fail "old folders and config must be backed up first (backup: $B)"
 C="$T/.claude/super-board/configs/books.json"
 q '(has("variant") | not) and ._qa_all == true' "$C" || fail "variant must go, qa-only remembered for the board: $(cat "$C")"
-q '.columns == ["Backlog","Ready","Building","QA","Review","Blocked","Done"]' "$C" || fail "columns must be the v3 seven"
+q '.columns == ["Backlog","Ready","Building","QA","Review","Approve","Blocked","Done"]' "$C" || fail "columns must be the v3.2 eight"
 q '.collect.sources == ["sentry","github","prs","architecture"] and (.collect | has("lookback_runs") | not)' "$C" || fail "collect keys not migrated"
 q '.merge_policy.default == "human" and .notifications.channel == "session" and (.refine | has("qa_hook_rounds") | not)' "$C" \
   || fail "merge rule / notifications / refine not migrated: $(cat "$C")"
@@ -193,7 +193,7 @@ chmod +x "$WORK/bin/gh"
 export GH_STATE="$WORK/gh.json" GH_LOG="$WORK/gh.log"
 
 # 7 — board-rank: open boards ranked by matching columns; the best is recommended only
-#     with ≥ 4 of 7, and missing columns are named.
+#     with ≥ 4 of 8, and missing columns are named.
 cat > "$GH_STATE" <<'JSON'
 {"projects":[{"number":2,"title":"Old","url":"u2","items":{"totalCount":3}},
              {"number":4,"title":"Ledgerly Roadmap","url":"u4","items":{"totalCount":31}},
@@ -204,12 +204,12 @@ cat > "$GH_STATE" <<'JSON'
  "items":[],"labels":[]}
 JSON
 OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-rank --owner eric)
-echo "$OUT" | q '.recommend == 4 and .boards[0].number == 4 and .boards[0].matches == 6 and .boards[0].missing == ["QA"]' \
-  || fail "best board should be #4 with QA missing: $OUT"
+echo "$OUT" | q '.recommend == 4 and .boards[0].number == 4 and .boards[0].matches == 6 and .boards[0].missing == ["QA","Approve"]' \
+  || fail "best board should be #4 with QA and Approve missing: $OUT"
 echo "$OUT" | q '[.boards[].number] | index(7) | not' || fail "closed boards are not offered: $OUT"
 jq '.projects = [.projects[0]]' "$GH_STATE" > "$WORK/s" && mv "$WORK/s" "$GH_STATE"
 PATH="$WORK/bin:$PATH" python3 "$SETUP" board-rank --owner eric | q '.recommend == null' \
-  || fail "a board with 1 of 7 columns should not be recommended"
+  || fail "a board with 1 of 8 columns should not be recommended"
 
 # 8 — board-migrate: adds missing columns, creates the three labels, maps old labels,
 #     labels a qa-only board's cards qa, moves Skipped cards to Done, removes Skipped,
@@ -228,13 +228,13 @@ JSON
 CFG="$WORK/books.json"
 echo '{"project":{"owner":"eric","number":2},"repo":{"remote":"https://github.com/eric/books.git"},"_qa_all":true}' > "$CFG"
 OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --root "$WORK/board8" --config "$CFG")
-echo "$OUT" | q '.added_columns == ["Backlog","Building"] and .labels_created == ["qa","feature","needs-you"]' || fail "columns/labels wrong: $OUT"
+echo "$OUT" | q '.added_columns == ["Backlog","Building","Approve"] and .labels_created == ["qa","feature","needs-you","waits-on","blocked:decision","blocked:failed-review","blocked:needs-access","blocked:github","blocked:other"]' || fail "columns/labels wrong: $OUT"
 echo "$OUT" | q '.labels_mapped == 1 and .qa_labelled == 1 and .skipped_moved == 1 and .skipped_removed == true' \
   || fail "mapping / qa-all / Skipped counts wrong: $OUT"
 grep -q -- "issue edit 2 --repo eric/books --add-label feature --remove-label build" "$GH_LOG" || fail "build should map to feature"
 grep -q -- "issue edit 3 --repo eric/books --add-label qa" "$GH_LOG" || fail "an unlabelled card on a qa-only board gets qa"
-q '[.options["2"][].name] == ["Backlog","Ready","Building","QA","Review","Blocked","Done"]' "$GH_STATE" \
-  || fail "options should be the v3 seven, Skipped gone: $(jq -c '.options["2"]' "$GH_STATE")"
+q '[.options["2"][].name] == ["Backlog","Ready","Building","QA","Review","Approve","Blocked","Done"]' "$GH_STATE" \
+  || fail "options should be the v3.2 eight, Skipped gone: $(jq -c '.options["2"]' "$GH_STATE")"
 q '[.items[] | {(.id): .status}] | add == {"I1":"Done","I2":"Ready","I3":"Ready","I4":"Review"}' "$GH_STATE" \
   || fail "every card must keep its column (Skipped → Done): $(jq -c .items "$GH_STATE")"
 echo "$OUT" | q '.restored >= 2' || fail "cleared statuses must be restored: $OUT"
@@ -242,22 +242,22 @@ q '. == {"I1":"Skipped","I2":"Ready","I3":"Ready","I4":"Review"}' "$(echo "$OUT"
   || fail "the pre-rewrite snapshot is saved to disk: $OUT"
 q 'has("_qa_all") | not' "$CFG" || fail "the qa-all marker is dropped once applied"
 
-# 9 — a brand-new board: --prune-empty swaps GitHub's default Todo / In Progress for the seven.
+# 9 — a brand-new board: --prune-empty swaps GitHub's default Todo / In Progress for the eight.
 cat > "$GH_STATE" <<'JSON'
-{"projects":[],"labels":["qa","bug","feature","needs-you"],
+{"projects":[],"labels":["qa","bug","feature","needs-you","waits-on","blocked:decision","blocked:failed-review","blocked:needs-access","blocked:github","blocked:other"],
  "options":{"2":[{"id":"t","name":"Todo","color":"GRAY","description":""},{"id":"p","name":"In Progress","color":"YELLOW","description":""},
                  {"id":"d","name":"Done","color":"GREEN","description":""}]},"items":[]}
 JSON
 OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --root "$WORK/board9" --owner eric --number 2 --repo eric/books --prune-empty)
-q '[.options["2"][].name] == ["Backlog","Ready","Building","QA","Review","Blocked","Done"]' "$GH_STATE" \
-  || fail "a new board should end with exactly the seven: $(jq -c '.options["2"]' "$GH_STATE")"
+q '[.options["2"][].name] == ["Backlog","Ready","Building","QA","Review","Approve","Blocked","Done"]' "$GH_STATE" \
+  || fail "a new board should end with exactly the eight: $(jq -c '.options["2"]' "$GH_STATE")"
 echo "$OUT" | q '.labels_created == []' || fail "existing labels are not created again: $OUT"
 
 # 10 — --prune-empty on a live board that already has the seven: the option rewrite wipes
 #      EVERY card's status (as GitHub does), and the restore must still run — it used to
 #      run only for added columns or Skipped, so 114 cards fell to "No status".
 cat > "$GH_STATE" <<'JSON'
-{"projects":[],"labels":["qa","bug","feature","needs-you"],"wipe_all":true,
+{"projects":[],"labels":["qa","bug","feature","needs-you","waits-on","blocked:decision","blocked:failed-review","blocked:needs-access","blocked:github","blocked:other"],"wipe_all":true,
  "options":{"2":[{"id":"k","name":"Backlog","color":"GRAY","description":""},{"id":"r","name":"Ready","color":"BLUE","description":""},
                  {"id":"u","name":"Building","color":"YELLOW","description":""},{"id":"q","name":"QA","color":"ORANGE","description":""},
                  {"id":"v","name":"Review","color":"PURPLE","description":""},{"id":"b","name":"Blocked","color":"RED","description":""},
@@ -269,7 +269,7 @@ cat > "$GH_STATE" <<'JSON'
 JSON
 : > "$GH_LOG"
 OUT=$(PATH="$WORK/bin:$PATH" python3 "$SETUP" board-migrate --owner eric --number 2 --repo eric/books --prune-empty --root "$WORK")
-q '[.options["2"][].name] == ["Backlog","Ready","Building","QA","Review","Blocked","Done"]' "$GH_STATE" \
+q '[.options["2"][].name] == ["Backlog","Ready","Building","QA","Review","Approve","Blocked","Done"]' "$GH_STATE" \
   || fail "the unused Todo should be pruned: $(jq -c '.options["2"]' "$GH_STATE")"
 q '[.items[] | {(.id): .status}] | add == {"I1":"Done","I2":"Building","I3":"Review","I4":null}' "$GH_STATE" \
   || fail "prune-empty must put every wiped status back: $(jq -c .items "$GH_STATE")"

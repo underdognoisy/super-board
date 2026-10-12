@@ -57,7 +57,7 @@ import shutil
 import subprocess
 import sys
 
-COLUMNS = ["Backlog", "Ready", "Building", "QA", "Review", "Blocked", "Done"]
+COLUMNS = ["Backlog", "Ready", "Building", "QA", "Review", "Approve", "Blocked", "Done"]
 LABELS = {
     "qa": ("0e8a16", "Test what exists; skips Building (super-board)"),
     "bug": ("d73a4a", "Something is broken; built, tested, reviewed (super-board)"),
@@ -67,8 +67,18 @@ LABELS = {
 # type-routing set (a card with only needs-you is still untyped). needs-you is
 # what the merge gate puts on 🙋 human-gated cards; creating it here means the
 # Reviewer never has to create it mid-run (observed 2026-10-11).
+#
+# v3.2.0: `waits-on` marks a sequenced Ready card (pre-flight overlap; it waits on
+# the card named in its `blocked-by:` line) and every Blocked card carries exactly
+# one `blocked:<reason>` label so the mini-card says WHY without opening it.
 UI_LABELS = {
     "needs-you": ("b60205", "Waiting on a human: merge, done, or changes: (super-board)"),
+    "waits-on": ("c5def5", "Sequenced behind another open card; stays in Ready (super-board)"),
+    "blocked:decision": ("d93f0b", "Blocked: needs a product/dev decision (super-board)"),
+    "blocked:failed-review": ("e99695", "Blocked: rebuild cap hit or truth-check failed (super-board)"),
+    "blocked:needs-access": ("fbca04", "Blocked: missing secret, env, credential or access (super-board)"),
+    "blocked:github": ("5319e7", "Blocked: GitHub refused the merge (super-board)"),
+    "blocked:other": ("bfdadc", "Blocked: see the Block comment (super-board)"),
 }
 # Type labels from older packs and common trackers → the three v3 labels.
 OLD_LABELS = {
@@ -540,7 +550,7 @@ OPTIONS_Q = "query($id:ID!){node(id:$id){... on ProjectV2SingleSelectField{optio
 UPDATE_M = ("mutation($id:ID!,$opts:[ProjectV2SingleSelectFieldOptionInput!]!){updateProjectV2Field(input:"
             "{fieldId:$id,singleSelectOptions:$opts}){projectV2Field{... on ProjectV2SingleSelectField{options{id name}}}}}")
 COLORS = {"Backlog": "GRAY", "Ready": "BLUE", "Building": "YELLOW", "QA": "ORANGE", "Review": "PURPLE",
-          "Blocked": "RED", "Done": "GREEN"}
+          "Approve": "PINK", "Blocked": "RED", "Done": "GREEN"}
 
 
 def gql(query, variables):

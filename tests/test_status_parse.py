@@ -326,7 +326,7 @@ def test_paginate_items_stops_when_cursor_missing() -> None:
 def test_board_order_matches_github_columns() -> None:
     """Kanban columns run left to right as on the board, Backlog included."""
     assert sbs.BOARD_ORDER == (
-        "Backlog", "Ready", "Building", "QA", "Review", "Blocked", "Done",
+        "Backlog", "Ready", "Building", "QA", "Review", "Approve", "Blocked", "Done",
     )
 
 
@@ -343,6 +343,18 @@ def test_render_kanban_prints_boxes_in_board_order() -> None:
     assert "later" not in out, "Backlog shows no titles"
     assert "🛡 #25  gated" in out
     assert "#20   (squash-merged, collapsed)" in out
+    assert all(sbs.visual_width(l) == 80 for l in out.splitlines()), "every box line is 80 cols"
+
+
+def test_render_kanban_approve_and_waits_on() -> None:
+    by_status = {s: [] for s in sbs.BOARD_ORDER}
+    by_status["Approve"] = [{"number": 31, "title": "merge me", "labels": ["needs-you"]}]
+    by_status["Ready"] = [{"number": 32, "title": "sequenced", "labels": ["waits-on"]},
+                          {"number": 33, "title": "free", "labels": []}]
+    out = sbs.render_kanban(by_status, lambda n: "  ", lambda n: "")
+    assert "🙋 #31  merge me" in out, "Approve cards show the 🙋 glyph"
+    assert "⏳ #32  sequenced  (waits-on)" in out, "a waits-on Ready card is marked"
+    assert "#33  free" in out and "#33  free  (waits-on)" not in out
     assert all(sbs.visual_width(l) == 80 for l in out.splitlines()), "every box line is 80 cols"
 
 
