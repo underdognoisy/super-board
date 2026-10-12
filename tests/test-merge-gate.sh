@@ -421,8 +421,11 @@ teardown
 head_setup
 cfgset ".migrations = {allowed_envs: [\"staging\"], target_env: \"live\",
         commands: {staging: \"touch $TMP/ran-staging\", live: \"npm run db:migrate:live\"}}"
-RC=0; OUT=$(STUB_OID="$SHA" STUB_META="$(meta "" prisma/migrations/2026/migration.sql)" gate --expect-head "$SHA" 2>/dev/null) || RC=$?
+RC=0; OUT=$(STUB_OID="$SHA" STUB_META="$(meta "" prisma/migrations/2026/migration.sql)" gate --expect-head "$SHA" 2>"$TMP/err19") || RC=$?
 [ "$RC" -eq 8 ] || fail "a migration for a disallowed env should exit 8, got $RC"
+# v3.2.0: an exit-8 card waits in Approve, not Blocked.
+grep -q "card → Approve" "$TMP/err19" || fail "exit 8 must route the card to Approve, got: $(cat "$TMP/err19")"
+grep -q "card → Blocked" "$TMP/err19" && fail "exit 8 must not route the card to Blocked"
 echo "$OUT" | grep -q "^needs-you: npm run db:migrate:live" || fail "exit 8 must print the exact command, got: $OUT"
 [ -f "$TMP/ran-staging" ] || fail "the allowed env should still migrate"
 grep -q '^pr merge' "$GH_LOG" && fail "no merge while a human step is open"

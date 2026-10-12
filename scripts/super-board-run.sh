@@ -229,6 +229,11 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" '
     .items[]
     | select(.status == $col and .content.type == "Issue")
     | select((.content.assignees // []) | length == 0)
+    # v3.2.0: a sequenced Ready card (`waits-on`) waits for the wave planner to
+    # release it; the legacy runner never dispatches it either.
+    | select($col != "Ready" or ([ ((.labels // []) + (.content.labels // []))[]
+                                   | (if type == "object" then .name else . end) | ascii_downcase ]
+                                 | index("waits-on") | not))
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
@@ -688,9 +693,10 @@ while true; do
   BUILDING=$(column_count "Building")
   QA=$(column_count "QA")
   REVIEW=$(column_count "Review")
+  APPROVE=$(column_count "Approve")
   BLOCKED=$(column_count "Blocked")
 
-  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_})"
+  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Approve=$APPROVE Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}) q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_})"
 
   if [ "$READY" -eq 0 ] && [ "$BUILDING" -eq 0 ] && [ "$QA" -eq 0 ] && [ "$REVIEW" -eq 0 ] \
      && [ "$BUILD_IDLE" -eq 1 ] && [ "$QA_IDLE" -eq 1 ] && [ "$REVIEW_IDLE" -eq 1 ]; then

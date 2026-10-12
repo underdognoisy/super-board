@@ -71,7 +71,8 @@
 # Exit codes, all meaningful to the caller:
 #   0  merged
 #   2  verification failed — branch needs a rebase pass, NOT a Blocked card
-#   3  PR is closed without a merge; no merge attempted
+#   3  PR is closed without a merge (or GitHub refused it); no merge attempted.
+#      Card → Blocked, label blocked:github
 #   4  could not take the lock within the timeout
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
@@ -80,18 +81,19 @@
 #      schema, a diff over auto_max_lines — default 400, "big PR — please
 #      review" — or merge_policy.default "human"). Stdout lists each
 #      `human-gate: <category> — <evidence>`. Nothing ran, nothing merged; the
-#      card → Blocked with the 🙋 template: the human reviews and merges it, or
-#      comments "done" after its pinned request to approve — the next wave re-runs
-#      the gate, which then skips the policy check and merges.
+#      card → Approve (v3.2.0; was Blocked) with the 🙋 request: the human reviews
+#      and merges it, or comments "done" after its pinned request to approve — the
+#      next wave re-runs the gate, which then skips the policy check and merges.
 #   79 required GitHub evidence unavailable: local run halt; preserve card and
 #      approval state, stop dispatch, and explicitly restart after diagnosis.
 #   8  🙋 needs you — the PR has migrations for a database the robot may not
 #      touch (merge_policy → migrations.allowed_envs), an allowed migrate command
 #      failed, or a human-only step is declared (`needs-you:` line in the PR body,
 #      or migrations.human_steps). Stdout lists the exact commands as
-#      `needs-you: <command>` lines. Card → Blocked with the 🙋 template; once the
+#      `needs-you: <command>` lines. Card → Approve with the 🙋 request; once the
 #      current request has verified trusted-human approval, the gate re-runs and
-#      merges.
+#      merges. The column only says where the human looks: approval is still
+#      the head-bound trusted `done` this gate re-verifies.
 #
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
@@ -313,7 +315,7 @@ if [ "${#NEEDS[@]}" -gt 0 ]; then
   else
     for n in "${NEEDS[@]}"; do echo "needs-you: $n"; done
     approval_request
-    say "🙋 needs you before this merges — card → Blocked with the commands above"
+    say "🙋 needs you before this merges — card → Approve with the commands above"
     exit 8
   fi
 fi
@@ -329,7 +331,7 @@ if [ "$APPROVED" = true ]; then
   approval_check
   if [ "$APPROVED" != true ]; then
     approval_request
-    say "human approval changed during verification; keep the card Blocked"
+    say "human approval changed during verification; keep the card in Approve"
     if [ -n "$HUMAN" ]; then exit 7; else exit 8; fi
   fi
 fi

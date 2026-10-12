@@ -50,6 +50,7 @@ const READ_SHAPES = [
   `- PR body+head: --kind body -- pr view <N> --json body,headRefOid`,
   `- PR metadata: --kind metadata -- pr view <N> --json files,labels,body,additions,deletions,changedFiles`,
   `- issue state: --kind state -- issue view <N> --json state --jq .state`,
+  `- issue labels (waits-on, needs-you, blocked:<reason>): --kind json -- issue view <N> --json labels`,
   `A read whose output misses its shape exits 64 for that call only and prints the valid form: fix the read, do not halt.`,
 ].join('\n')
 const READ_FAILURE = READ_SHAPES + '\n' + `Required GitHub reads use .claude/bin/super-board-github-read.py: three total attempts, exit 79 means run halted. Check --check before any GitHub write, migration, or merge. On exit 79 preserve worktree/card/approval/claims, make no more GitHub calls, and report status=halted (preflight verdict=halted). Never retry a mutation. Config: ${input.configPath}.`
@@ -122,8 +123,9 @@ const REVIEW_MEMORY = [
   // Truth-check brief is fixed (super-review → Adversarial mode); a hand-written one once made over-building blocking.
   `Truth-check sub-agents get the fixed brief from super-review → "Adversarial mode", verbatim. After collecting, reclass any Over-engineering Blocker to Should fix; it never decides merge or bounce.`,
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
-  `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): Blocked with the 🙋 template quoting its human-gate lines; To unblock = merge it yourself, or comment done to approve.`,
-  `Exit 8 = 🙋 needs you (migration for a DB the robot may not touch, failed migrate, declared human step): Blocked with the 🙋 template, exact commands from its needs-you lines, label needs-you.`,
+  `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): move the card to Approve (NOT Blocked) with the 🙋 request quoting its human-gate lines, label needs-you. No checkboxes: the request says "Comment \`done\` on this issue to approve and merge — or \`changes: <what>\` to send it back."`,
+  `Exit 8 = 🙋 needs you (migration for a DB the robot may not touch, failed migrate, declared human step): move the card to Approve with the 🙋 request, exact commands from its needs-you lines, label needs-you. Exit 3 = GitHub refused: Blocked, label blocked:github.`,
+  `Return status=human-gate with column=Approve for exits 7 and 8.`,
 ]
 
 // GitHub budget (rate-limit-etiquette.md → "Price list"). Measured 2026-10-04: a
@@ -158,7 +160,8 @@ const lanePrompt = (lane, card) => [
   `Report your exit via structured output:`,
   `- status=advanced  → card moved forward (Building→QA, QA→Review, Review→Done/merged)`,
   `- status=bounced   → card moved backward (QA fail → Ready, Reviewer bounce → Ready/QA)`,
-  `- status=blocked or human-gate → you wrote the Block template and moved the card to Blocked`,
+  `- status=blocked    → you wrote the Block template, moved the card to Blocked and added exactly ONE reason label (block-template.md → "Reason labels")`,
+  `- status=human-gate → merge gate exit 7/8: you posted the 🙋 request and moved the card to Approve`,
   `- status=halted    → required service evidence is unavailable; leave card state unchanged and stop the run`,
   `- status=failed    → you could not complete the lifecycle (say why in detail)`,
   `column = the column the card is in when you exit. detail = one line. Include prUrl/branch when they exist.`,
@@ -205,9 +208,10 @@ const runLane = async (lane, card, model, history) => {
 // One agent per batch of PREFLIGHT_BATCH cards, so the three gh list calls in
 // super-board-preflight.sh are paid once per batch, not once per card.
 // Outcomes: proceed · hold (agent wrote the Block template, card → Blocked) ·
-// sequence (card → Blocked with `blocked-by:` the overlapping PR's issue, so the
-// wave-start sweep frees it; or proceed with a conflict note when that PR closes
-// no issue) · skipped (pre-flight blind — card stays Ready for the next wave).
+// sequence (card STAYS in Ready with label `waits-on` and a comment whose last
+// line is `blocked-by: <the overlapping PR's issue>`; the planner skips it until
+// that closes, then `release` drops the label — or proceed with a conflict note
+// when that PR closes no issue) · skipped (pre-flight blind — stays Ready).
 // A card the agent did not answer for is skipped, never built unchecked.
 const PREFLIGHT_SCHEMA = {
   type: 'object',
@@ -238,7 +242,8 @@ const preflightPrompt = (batch) => [
   `Read .claude/skills/super-board/references/run.md → "Builder pre-flight" and follow it EXACTLY. You write no code.`,
   `Other cards in this wave: ${JSON.stringify(input.cards.map(({ number, status, title }) => ({ number, status, title })))}`,
   `Run .claude/bin/super-board-preflight.sh once for the whole batch, then judge its candidates semantically.`,
-  `hold / sequence-behind → post the Block template (block-template.md) and move the card to Blocked yourself.`,
+  `hold → post the Block template (block-template.md), move the card to Blocked yourself and add its ONE blocked:<reason> label.`,
+  `sequence behind an issue → the card STAYS in Ready: add label waits-on and comment "[builder] [report] ⏳ waits on #<N> · <overlapping PR and files>" ending with the machine line "blocked-by: <N>". Return column Ready and blockedBy [<N>]. Never move it to Blocked.`,
   `Two Ready cards overlapping each other with no open PR: the lower-numbered one proceeds; sequence only the other, blockedBy [the lower]. Never both.`,
   `A sequence with nothing to wait on (empty blockedBy) leaves the card in Ready: return column Ready and it builds.`,
   BOARD_IO(),
@@ -265,20 +270,24 @@ await Promise.all(batches.map(async (batch) => {
 // sequence with nothing to wait on = proceed with a conflict note (the agent posted it).
 // No column and an empty blockedBy is the same case: nothing to wait on never parks a
 // card (2026-10-03: #180/#181 each "sequenced" behind the other, neither built).
+// A sequence that NAMES a blocker never builds this wave, even though the card stays
+// in Ready (v3.2.0 waits-on): the column alone no longer tells the two apart.
+const waitsOn = (v) => Array.isArray(v.blockedBy) && v.blockedBy.length > 0
 const preflightGo = (card) => {
   const v = verdicts.get(card.number)
   if (!v) return false
   if (v.verdict === 'proceed') return true
-  return v.verdict === 'sequence' && (v.column === 'Ready' ||
-    (!v.column && Array.isArray(v.blockedBy) && v.blockedBy.length === 0))
+  return v.verdict === 'sequence' && !waitsOn(v) && (v.column === 'Ready' ||
+    (!v.column && Array.isArray(v.blockedBy)))
 }
 const preflightExit = (card) => {
   const v = verdicts.get(card.number) ||
     { verdict: 'skipped', detail: 'pre-flight returned no verdict — not built unchecked; retried next wave' }
   return {
     lane: 'preflight',
-    status: v.verdict === 'halted' ? 'halted' : v.verdict === 'skipped' ? 'failed' : 'blocked',
-    column: v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
+    status: v.verdict === 'halted' ? 'halted' : v.verdict === 'skipped' ? 'failed'
+      : v.verdict === 'sequence' ? 'sequenced' : 'blocked',
+    column: v.column || (['skipped', 'halted', 'sequence'].includes(v.verdict) ? 'Ready' : 'Blocked'),
     detail: `${v.verdict}: ${v.detail}`,
   }
 }
@@ -352,6 +361,10 @@ const summary = results.filter(Boolean).map((r) => {
     lanesRun: r.history.map((h) => `${h.lane}:${h.status}`).join(' → ') || 'none',
   }
 })
+// Where the wave left cards, by column — Approve is the human's merge queue,
+// Blocked the real stops (run-workflow.md → Report).
+const columns = {}
+for (const s of summary) columns[s.column] = (columns[s.column] || 0) + 1
 log(`wave complete: ${summary.length} cards — ` +
     summary.map((s) => `#${s.number}=${s.finalStatus}@${s.column}`).join(', '))
-return { cards: summary, halted }
+return { cards: summary, columns, halted }

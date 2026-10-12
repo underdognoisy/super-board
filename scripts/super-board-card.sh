@@ -18,7 +18,7 @@
 #
 # Usage:
 #   super-board-card.sh [--config <cfg.json>] [--owner O --number N] [--repo owner/name] <verb>
-#     move <issue> <Status>   set the card's Status column (Ready, QA, Review, Blocked, Done, …)
+#     move <issue> <Status>   set the card's Status column (Ready, QA, Review, Approve, Blocked, Done, …)
 #     status <issue>          print the card's current Status name (1 point, never cached)
 #     item-id <issue>         print the card's project item id (cached)
 #     ids                     print {projectId, fieldId, options:{name:id}} (cached)

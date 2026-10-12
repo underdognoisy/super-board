@@ -89,6 +89,33 @@ const by = (out, n) => out.cards.find((c) => c.number === n)
   let threw = false
   try { await run({ configPath: 'c.json', variant: 'qa-only', cards: [card(1)] }, {}) } catch { threw = true }
   threw || fail('variant qa-only must be refused')
+
+  // 11 — v3.2.0 waits-on: a sequence that names a blocker stays in Ready but never
+  //      builds this wave; it is reported `sequenced@Ready`, not a Blocked card.
+  //      The pre-flight agent is told to label it waits-on, never move it to Blocked.
+  const seq = await run({ configPath: 'c.json', cards: [card(7), card(8)] }, {
+    7: { verdict: 'sequence', column: 'Ready', blockedBy: [50], detail: 'waits on #50 (PR #41 touches login.ts)' },
+    8: { verdict: 'sequence', column: 'Ready', blockedBy: [], detail: 'expected conflict with PR #44' },
+  })
+  seq.labels.includes('build:#7') && fail('#7 waits on #50 and must not build this wave')
+  seq.labels.includes('build:#8') || fail('#8 has nothing to wait on and must build')
+  ;(by(seq.out, 7).finalStatus === 'sequenced' && by(seq.out, 7).column === 'Ready')
+    || fail('#7 must be sequenced@Ready: ' + JSON.stringify(by(seq.out, 7)))
+  const pf = seq.prompts[seq.labels.find((l) => l.startsWith('preflight'))]
+  ;(/waits-on/.test(pf) && /blocked-by: <N>/.test(pf) && /Never move it to Blocked/.test(pf))
+    || fail('pre-flight must be told: waits-on label + blocked-by line, never Blocked')
+  // A sequence with no column and no blockedBy at all is not built either (not a go).
+  const bare = await run({ configPath: 'c.json', cards: [card(9)] }, { 9: { verdict: 'sequence', detail: 'unclear' } })
+  bare.labels.includes('build:#9') && fail('#9 sequence with no blockedBy/column must not build')
+
+  // 12 — exits 7/8 land in Approve, exit 3 in Blocked with blocked:github; the
+  //      summary carries the per-column tally the orchestrator reports.
+  const rv = await run({ configPath: 'c.json', cards: [card(6, 'Review')] }, {})
+  const rp = rv.prompts['review:#6']
+  ;(/Exit 7[^\n]*Approve \(NOT Blocked\)/.test(rp) && /Exit 8[^\n]*Approve/.test(rp) && /blocked:github/.test(rp))
+    || fail('the Reviewer must route exits 7/8 to Approve and 3 to blocked:github')
+  ;/\[ \]/.test(rp) && fail('the review prompt must not render a checkbox')
+  ;(rv.out.columns && rv.out.columns.Done === 1) || fail('summary must tally columns: ' + JSON.stringify(rv.out.columns))
 })().catch((e) => fail(e.stack))
 JS
-echo "PASS: test-wave-preflight.sh (10 scenarios)"
+echo "PASS: test-wave-preflight.sh (12 scenarios)"
