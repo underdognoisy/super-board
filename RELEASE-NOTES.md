@@ -1,5 +1,35 @@
 # Release notes
 
+## v3.2.0 — 2026-10-12
+
+`Blocked` stops being a dump for four different states. Board shape: Backlog · Ready · Building ·
+QA · Review · **Approve** · Blocked · Done.
+
+- ✨ **Approve column.** A card that passed review and waits on a human merge decision (merge
+  gate exit 7 / 8) goes to `Approve`, not Blocked. The 🙋 request, the `needs-you` label and the
+  trusted, head-bound approval check are unchanged; the planner's `resume`, `changes`,
+  `classify` and `refreshApproval` routes read Approve cards (and, for cards gated before this
+  release, a 🙋 / `needs-you` card still in Blocked). The column grants nothing: only a verified
+  `done` after the pinned request resumes a card, and classification still never merges.
+- 🐛 **No checkboxes on the 🙋 request.** Ticking `- [ ] Review and merge PR #18` did nothing,
+  because a ticked box is not a signal. The request now says "Comment `done` on this issue to
+  approve and merge — or `changes: <what>` to send it back."
+- 🐛 **An early `done` is answered, not ignored.** A trusted `done` posted before the current
+  request never approves; the planner reports it in `staleDone` and the human is told once
+  (`stale-done: <id>` machine line dedups the notice).
+- ⏳ **Sequenced cards stay in Ready.** Pre-flight's `sequence` keeps the card in `Ready` with the
+  `waits-on` label and a comment ending `blocked-by: <N>`. The planner never picks it while
+  labelled; `release` frees it when `<N>` closes. Sequenced cards already in Blocked are swept as
+  before.
+- 🏷️ **A reason label on every Blocked card.** `blocked:decision` · `blocked:failed-review` ·
+  `blocked:needs-access` · `blocked:github` · `blocked:other`, mapped from the Block comment's
+  reason tag and removed when the card leaves Blocked. The planner's `unlabelled` list finds
+  Blocked cards without one; `sweep` entries carry `removeLabels`.
+- 🔧 **Onboard / board-migrate** add the Approve option (pink, between Review and Blocked) and
+  create `waits-on` plus the five `blocked:*` labels. Adding an option rewrites the Status
+  options, which re-mints option ids and clears every card's Status (v3.0.5); `board-migrate`
+  snapshots and restores them. Keep the board idle while it runs.
+
 ## v3.1.1 — 2026-10-04
 
 `/super-board run` inside a Codex session runs on Codex instead of failing.

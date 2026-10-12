@@ -17,7 +17,7 @@
       "id": "super-board",
       "label": "/super-board",
       "kind": "public",
-      "what": "The autonomous GitHub-Project pipeline: five verbs (onboard, lint, status, run, stop) take one board shape (Backlog · Ready · Building · QA · Review · Blocked · Done) from empty to drained, with labels qa · bug · feature routing each card.",
+      "what": "The autonomous GitHub-Project pipeline: five verbs (onboard, lint, status, run, stop) take one board shape (Backlog · Ready · Building · QA · Review · Approve · Blocked · Done) from empty to drained, with labels qa · bug · feature routing each card.",
       "when": "Eric types /super-board <verb>, or says \"drain my GitHub project\" or \"stop super-board\"; with no verb it asks which one.",
       "how": "The session is an orchestrator only: it routes the verb to its reference file, dispatches lane agents, and never does product work itself. Board state is the only state, so `run` is also resume. Every commit, ticket, PR body and comment follows references/writing-standard.md.",
       "source": [
@@ -207,7 +207,7 @@
       "kind": "lane",
       "what": "Reviewer lane and standalone PR review: forms its own hypotheses first, remembers prior findings, classes every finding, and merges only through the merge gate.",
       "when": "Started by the board for cards in Review (always on the session model). Also runnable standalone when Eric says \"review this branch\" or \"is this merge-ready\".",
-      "how": "Thread scan, prior-report round 1, own pass with code-review, codebase-design and ponytail-review, a rerun of the Tester's exact test command, then an adversarial truth-check on non-trivial diffs. One report comment is edited in place every round. A clean review merges through the gate pinned to the reviewed head SHA; exit 7 or 8 parks the card in Blocked with 🙋. Visual problems become a UI ticket, never a ui-refine-loop run. The truth-check sub-agents get a fixed verbatim brief, and Over-engineering is never a Blocker from any of them.",
+      "how": "Thread scan, prior-report round 1, own pass with code-review, codebase-design and ponytail-review, a rerun of the Tester's exact test command, then an adversarial truth-check on non-trivial diffs. One report comment is edited in place every round. A clean review merges through the gate pinned to the reviewed head SHA; exit 7 or 8 moves the card to Approve with 🙋. Visual problems become a UI ticket, never a ui-refine-loop run. The truth-check sub-agents get a fixed verbatim brief, and Over-engineering is never a Blocker from any of them.",
       "source": [
         "_skills/vendor/super-board/skills/super-review/SKILL.md"
       ],
@@ -218,7 +218,7 @@
       "id": "gh-board",
       "label": "GitHub Project board",
       "kind": "board",
-      "what": "The configured GitHub Project with seven columns (Backlog, Ready, Building, QA, Review, Blocked, Done) and three routing labels (qa, bug, feature); the only loop state. There is no Skipped column.",
+      "what": "The configured GitHub Project with eight columns (Backlog, Ready, Building, QA, Review, Approve, Blocked, Done) and three routing labels (qa, bug, feature); the only loop state. There is no Skipped column.",
       "when": "Read and written on every wave, by every lane move, and by /super-collect filing into Backlog.",
       "how": "Cards move by `gh project item-edit`; assignees act as claim mutexes; PR threads start with their owner lane [builder] / [qa] / [reviewer] plus a label. A card dropped on purpose is closed as not planned and moved to Done with a 🤷 comment.",
       "source": [
@@ -441,7 +441,7 @@
       "kind": "script",
       "what": "Read-only planner that computes the next wave from board state: cards (each with its lane and labels) plus the sweep, flag, stranded and resume lists.",
       "when": "Run by the orchestrator at the start of every wave, after the rate and usage guards pass.",
-      "how": "Reads the board and `## Blocked by` dependencies (via super-board-deps.sh); a Ready card labelled qa gets lane qa, every other Ready card lane build. `resume` lists 🙋 cards a human approved with `done`. A `variant: qa-only` config is refused with exit 65.",
+      "how": "Reads the board and `## Blocked by` dependencies (via super-board-deps.sh); a Ready card labelled qa gets lane qa, every other Ready card lane build. `resume` lists 🙋 Approve cards a human approved with `done`; `release` frees `waits-on` cards. A `variant: qa-only` config is refused with exit 65.",
       "source": [
         "_skills/vendor/super-board/scripts/super-board-wave-plan.sh",
         "_skills/vendor/super-board/scripts/super-board-deps.sh"

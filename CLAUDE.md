@@ -57,10 +57,13 @@ one exists (nothing outside the markers), records an older install in
 `super-board onboard` asks the questions. Onboard's 🔍 Checks (`scripts/super-board-setup.py`)
 fixes must-haves and finishes upgrades with no question.
 
-## Board shape (v3.0.0)
+## Board shape (v3.2.0)
 
-Columns are always Backlog · Ready · Building · QA · Review · Blocked · Done — no Skipped, no
-per-board `variant`. Labels `qa` · `bug` · `feature` route cards: `qa` skips Building, everything
+Columns are always Backlog · Ready · Building · QA · Review · Approve · Blocked · Done — no Skipped,
+no per-board `variant`. `Approve` holds cards waiting on a human merge decision (merge gate exit
+7 / 8); `Blocked` holds real stops, each with one `blocked:<reason>` label; a sequenced card stays
+in `Ready` with `waits-on`. Approval stays the trusted, head-bound `done` in
+`scripts/super-board-approval.py` — the column only says where the planner looks. Labels `qa` · `bug` · `feature` route cards: `qa` skips Building, everything
 else (and no label) is built. Change routing in `scripts/super-board-wave-plan.sh`,
 `workflows/super-board-wave.js` and `run.md` → "Lanes and label routing" together.
 
