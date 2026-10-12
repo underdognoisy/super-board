@@ -56,7 +56,7 @@
 # "qa-only" is refused (exit 65) until `super-board onboard` upgrades it, because
 # reading it as "full" would start building on a board meant only for testing.
 #
-# THE APPROVE COLUMN (v3.1.0). A card that passed review and waits on a human
+# THE APPROVE COLUMN (v3.2.0). A card that passed review and waits on a human
 # merge decision (merge gate exit 7 / 8) sits in `Approve`, not Blocked. The
 # approval routes — resume, changes, classify, refreshApproval, staleDone — read
 # Approve cards, plus (backward compatibility) a Blocked card the graph marks
@@ -65,13 +65,13 @@
 # trusted-human verdict from super-board-approval.py. Moving a card into Approve
 # by hand grants nothing.
 #
-# WAITS-ON (v3.1.0). Pre-flight's "sequence" outcome no longer parks a card in
+# WAITS-ON (v3.2.0). Pre-flight's "sequence" outcome no longer parks a card in
 # Blocked: it stays in Ready with the `waits-on` label and a comment carrying
 # `blocked-by: N`. Such a card is never picked while it carries the label. Once
 # the graph says it is free, it is reported in `release`; the orchestrator drops
 # the label (one comment) and the next wave picks it.
 #
-# REASON LABELS (v3.1.0). Every Blocked card carries one `blocked:<reason>`
+# REASON LABELS (v3.2.0). Every Blocked card carries one `blocked:<reason>`
 # label. `unlabelled` lists Blocked cards with none (legacy, or a lane that
 # skipped it) so the orchestrator can add one from the Block comment's tag.
 # `sweep` carries `removeLabels`: the reason labels to drop on the way to Ready.
