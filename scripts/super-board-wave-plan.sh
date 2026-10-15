@@ -222,10 +222,13 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   | { cards: (if $cap > 0 then ($picked | .[:$cap]) else $picked end),
 
       # Blocked cards whose blockers have all closed. The orchestrator moves
-      # these to Ready before launching, so they join this very wave.
+      # these to Ready before launching, so they join this very wave. A card
+      # with NO issue blockers is waiting on a person (decision, access) — an
+      # empty list is not "all closed", so it never sweeps.
       sweep: [ $all[]
                | select(.status == "Blocked")
                | select(free(.number))
+               | select((dep(.number).blockers // []) | length > 0)
                | select((dep(.number).changesRequested // null) == null)
                | { number, title,
                    clearedBy: (dep(.number) | .blockers),

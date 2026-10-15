@@ -296,6 +296,51 @@ def test_stale_done_notice():
     print("test_stale_done_notice: PASS (early done never approves; noticed once; trusted-only)")
 
 
+def test_classified_bounce_frees_gate():
+    # 2026-10-15 #67: the orchestrator bounced on a classified free-text note
+    # ("recheck this testing result"), but the dead 🙋 request kept the card
+    # humanGated in Ready, so no wave ever picked it. The 🔁 report acking a
+    # trusted human comment must free the gate, exactly like `changes:`.
+    gate = gate_comment()
+    note = c("john", "I need you to recheck this testing result", when="21:54:00", cid=110)
+    bounce = c("john", "[orchestrator] [report] 🔁 changes requested by john\n"
+               "> I need you to recheck this testing result\nNext: builder\n\nclassified: 110",
+               when="21:56:00", cid=111)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([gate, note, bounce], approved=True))
+    assert entry["humanGated"] is False and entry["runnable"] is True, \
+        f"a classified bounce must free the 🙋 hold, got {entry}"
+    assert entry["needsYouDone"] is False, "a bounced request never resumes toward a merge"
+
+    # A discussion ack (no 🔁 report) does NOT kill the request.
+    reply = c("john", "[orchestrator] [report] replied\nclassified: 110", when="21:56:00", cid=112)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([gate, note, reply]))
+    assert entry["humanGated"] is True, "a discussion ack must leave the gate standing"
+
+    # A 🔁 report from before the current request is history, not a bounce.
+    old = c("john", "[orchestrator] [report] 🔁 changes requested by john\nclassified: 110",
+            when="21:40:00", cid=113)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([gate, note, old]))
+    assert entry["humanGated"] is True, "a pre-request bounce report must not clear the gate"
+
+    # An untrusted 🔁 report cannot free the gate.
+    fake = c("bystander", "[orchestrator] [report] 🔁 changes requested\nclassified: 110",
+             when="21:56:00", cid=114)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([gate, note, fake]))
+    assert entry["humanGated"] is True, "an untrusted bounce report must not clear the gate"
+
+    # A non-🙋 gate (design ruling) is never cleared by a classified bounce.
+    ruling = c("john", "[builder] [blocker] 🛑 blocked · 🧑 product call\n"
+               "Reason tag: 🧑 product ruling\nblocked-by: -", when="21:52:00", cid=115)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([gate, ruling, note, bounce]))
+    assert entry["humanGated"] is True, "a 🧑 gate stays until a person moves it"
+    print("test_classified_bounce_frees_gate: PASS (🔁 ack frees 🙋 hold; reply/old/untrusted/🧑 do not)")
+
+
 if __name__ == "__main__":
     test_classify()
     test_changes_per_line()
@@ -306,3 +351,4 @@ if __name__ == "__main__":
     test_classify_holds_resume()
     test_approval_vocab()
     test_stale_done_notice()
+    test_classified_bounce_frees_gate()
