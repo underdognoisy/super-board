@@ -7,7 +7,8 @@ The halt file is shared through the main checkout, including linked worktrees.
 Only an explicit new run clears it with --resume after preserving the old reason.
 Mutations never enter this retry helper. For the agent-facing kinds in FORMS, a
 payload that fails its shape on every attempt is the caller's malformed read, not
-an outage: that call exits 64 with the valid form and the run keeps going. Scripts
+an outage: that call exits 64 with the valid form and the run keeps going. A command
+line gh itself rejects (e.g. --slurp with --jq) exits 64 on the first attempt. Scripts
 whose commands are fixed set SB_GITHUB_READ_STRICT=1 to keep halting on it.
 """
 from __future__ import annotations
@@ -109,6 +110,12 @@ def permanent_error(text):
                      r'GRAPHQL_VALIDATION_FAILED|undefinedField|variableRequiresValidType|'
                      r'HTTP 40[134]|Bad credentials|requires authentication|Resource not accessible|'
                      r'Could not resolve to (?:a|an) |missing required scopes', text, re.I) is not None
+
+
+def cli_usage_error(text):
+    # gh refused the command line itself; GitHub was never asked.
+    return re.search(r'option is not supported with|unknown (?:flag|shorthand flag|command)|'
+                     r'accepts \d+ arg|Usage:\s+gh ', text) is not None
 
 
 def require(condition, why):
@@ -295,6 +302,11 @@ def read(args, kind='json', meta=None, recovering=False):
                     diagnostic += json.dumps([p.get('errors', []) for p in (payload if isinstance(payload, list) else [payload]) if isinstance(p, dict)])
                 except ValueError:
                     pass
+            if result.returncode and cli_usage_error(result.stderr):
+                why = f'gh rejected the command line: {result.stderr.strip().splitlines()[0]}'
+                if os.environ.get('SB_GITHUB_READ_STRICT'):
+                    halt(why, attempt, operation)
+                raise ValueError(f'{why}; this call failed, the run continues. Valid form: --kind {kind} -- {FORMS.get(kind, "<gh args>")}')
             if permanent_error(diagnostic):
                 halt('GitHub rejected a required read (query, authentication, or permission error); fix it before restarting', attempt, operation)
             if result.returncode:
