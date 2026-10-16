@@ -56,6 +56,43 @@ def main():
     swept = [s["number"] for s in json.loads(proc.stdout)["sweep"]]
     assert swept == [80], f"only the card whose issue blocker closed sweeps, got {swept}"
     print("ok: sweep frees #80 (blocker closed); #74/#76 (person-blocked) and #81 (open) stay")
+    ready_after_drag()
+
+
+def ready_after_drag():
+    """A person-gated card a person dragged to Ready is picked (#74, 2026-10-16).
+
+    The builder's `blocked-by: -` stays the newest line, so humanGated stays true
+    after the drag; the planner must read the Ready column as the gate cleared.
+    """
+    gated = dep(74, [], [])
+    gated.update(humanGated=True, runnable=False)
+    still_open = dep(82, [13], [13])
+    still_open.update(humanGated=False, runnable=False)
+    items = {"items": [
+        item(74, "Ready", ["feature"]),                  # dragged back after the ruling
+        item(82, "Ready", ["feature"]),                  # Ready but issue blocker #13 open
+        item(83, "Ready", ["feature"]),                  # unknown to the graph
+        item(76, "Blocked", ["blocked:needs-access"]),   # gated, still in Blocked
+    ]}
+    deps = {"74": gated, "82": still_open, "76": dict(gated, number=76)}
+    config = {"project": {"owner": "o", "number": 1}, "repo": {"remote": "https://github.com/o/r"},
+              "max_workers": 0}
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {}
+        for name, data in (("items", items), ("deps", deps), ("config", config)):
+            paths[name] = Path(tmp) / f"{name}.json"
+            paths[name].write_text(json.dumps(data))
+        env = dict(os.environ, SB_GITHUB_HALT_FILE=str(Path(tmp) / "halt.json"))
+        proc = subprocess.run(["bash", str(PLAN), "--config", str(paths["config"]),
+                               "--items", str(paths["items"]), "--deps", str(paths["deps"])],
+                              capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    plan = json.loads(proc.stdout)
+    picked = [c["number"] for c in plan["cards"]]
+    assert picked == [74], f"only the dragged person-gated card runs, got {picked}"
+    assert [s["number"] for s in plan["sweep"]] == [], plan["sweep"]
+    print("ok: #74 dragged to Ready runs; #82 (open blocker), #83 (unknown), #76 (Blocked) stay")
 
 
 if __name__ == "__main__":

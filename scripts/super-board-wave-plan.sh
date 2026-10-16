@@ -214,7 +214,16 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
   # Ready: only the ones the graph says are actually free. A `waits-on` card is
   # never picked while it carries the label — `release` drops it first.
-  | [ $all[] | select(.status == "Ready") | select(free(.number))
+  # A person-gated card (`blocked-by: -`) is free once it sits in Ready: the
+  # Block comment says "drag this card to Ready", and no lane or sweep ever
+  # moves a gated card there, so the column IS the person clearing the gate.
+  # The `blocked-by: -` line stays the newest one, so `runnable` alone would
+  # hold it forever (#74, 2026-10-16). Open issue blockers still hold it, and
+  # merge stays the SHA-bound `done` in validate() either way.
+  | [ $all[] | select(.status == "Ready")
+      | select(free(.number) or (dep(.number) as $d
+                                 | $d != null and $d.parseable and $d.humanGated
+                                   and (($d.openBlockers // []) | length == 0)))
       | select(.labels | index("waits-on") | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.

@@ -143,7 +143,9 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
   #
   # `blocked-by: -` is NOT "no blockers". It means nothing on this board clears
   # it — a credentials, permissions or product-decision block — so the card is
-  # parseable AND deliberately not runnable. Only a person moves it.
+  # parseable AND deliberately not runnable. Only a person moves it — and when
+  # they drag it to Ready, super-board-wave-plan.sh reads that column as the
+  # gate cleared (humanGated stays true here; the planner owns the column).
   def comment_line:
     [ (.comments.nodes // .comments // [])[]
       | (.body // "") | split("\n")[]
