@@ -143,7 +143,7 @@ for i, f in enumerate(m.get('files', [])):
 DIFF
     ;;
   "api graphql")
-    jq -n --arg head "$STUB_OID" '[{data:{repository:{pullRequest:{headRefOid:$head,state:"OPEN",closingIssuesReferences:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{number:42,repository:{nameWithOwner:"x/y"}}]}}}}}]' ;;
+    jq -n --arg head "$STUB_OID" --argjson none "${STUB_NO_LINKS:-0}" '[{data:{repository:{pullRequest:{headRefOid:$head,state:"OPEN",closingIssuesReferences:{pageInfo:{hasNextPage:false,endCursor:null},nodes:(if $none == 1 then [] else [{number:42,repository:{nameWithOwner:"x/y"}}] end)}}}}}]' ;;
   "api --paginate")
     [ "${STUB_APPROVAL:-0}" = 1 ] || { echo '[[]]'; exit 0; }
     case "$*" in
@@ -260,6 +260,25 @@ RC=0; OUT=$(STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-hea
 [ "$RC" -eq 7 ] || fail "a money label should exit 7, got $RC"
 echo "$OUT" | grep -q "^human-gate: money — label money" || fail "exit 7 must name the category, got: $OUT"
 grep -q '^pr merge' "$GH_LOG" && fail "no merge may be attempted on a human-gated PR"
+teardown
+
+# 14b — exit 9: a request is never printed for an issue the PR does not close.
+#       #66 (2026-10-16): the PR body lost `Closes #66`, the request still went
+#       up on #66, and check() ignored six `done`s as "not linked to this PR".
+head_setup
+RC=0; OUT=$(STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" --issue 42 2>/dev/null) || RC=$?
+[ "$RC" -eq 7 ] || fail "a linked card issue keeps exit 7, got $RC"
+echo "$OUT" | grep -q '^approval-request: ' || fail "a linked hold must print the request, got: $OUT"
+RC=0; OUT=$(STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" --issue 66 2>/dev/null) || RC=$?
+[ "$RC" -eq 9 ] || fail "an unlinked card issue should exit 9, got $RC"
+echo "$OUT" | grep -q '^unlinked: PR #1 does not close #66' || fail "exit 9 must say what is unlinked, got: $OUT"
+echo "$OUT" | grep -q '^approval-request: ' && fail "no request may be printed for an unlinked issue"
+RC=0; OUT=$(STUB_NO_LINKS=1 STUB_OID="$SHA" STUB_META="$(meta money src/x.ts)" gate --expect-head "$SHA" 2>/dev/null) || RC=$?
+[ "$RC" -eq 9 ] || fail "a PR that closes no issue should exit 9, got $RC"
+echo "$OUT" | grep -q '^unlinked: PR #1 closes no issue' || fail "exit 9 must say the PR closes nothing, got: $OUT"
+grep -q '^pr merge' "$GH_LOG" && fail "no merge may be attempted on an unlinked PR"
+RC=0; gate --expect-head "$SHA" --issue abc >/dev/null 2>&1 || RC=$?
+[ "$RC" -eq 64 ] || fail "--issue must be a number, got $RC"
 teardown
 
 # 15 — an auth path, by glob; merge_policy.default human; a diff over auto_max_lines.

@@ -91,6 +91,36 @@ is  "moved head exits 6" "6" "$RC"
 hasnt "no edit on a moved head" "$(cat "$GH_LOG")" "PATCH"
 is  "body unchanged" "$(cat "$WORK/before.md")" "$(cat "$BODY")"
 
+echo "── an edit never drops an issue link (#66, 2026-10-16)"
+# The reviewer's 🙋 status rewrite said "request on #66" and lost "Closes #66";
+# the approval gate then refused six `done`s as "not linked to this PR".
+cat > "$BODY" <<'MD'
+<!-- sb:status -->
+> [!WARNING]
+> 🔍 QA v2 → Review · ✅ 2/3 AC · Closes #66 · head `c5359ed`
+<!-- /sb:status -->
+
+<!-- sb:problem -->
+## Problem
+<!-- /sb:problem -->
+MD
+printf '> [!IMPORTANT]\n> 🙋 Review → Approve · request on #66 · head `c5359ed`\n' > "$WORK/gate.md"
+run --pr 80 --block status --expect-head 3f9c2a1 --body-file "$WORK/gate.md" >/dev/null
+has "dropped link kept"          "$(cat "$BODY")" "Closes #66"
+has "stderr names the kept link" "$(cat "$WORK/err")" "kept #66"
+L=$(grep -n '<!-- sb:links -->' "$BODY" | cut -d: -f1); S=$(grep -n '<!-- sb:status -->' "$BODY" | cut -d: -f1)
+[ -n "$L" ] && [ "$L" -lt "$S" ] && ok "links block sits first" || bad "links block sits first" "< $S" "$L"
+is "kept once on a repeat edit" "unchanged" "$(run --pr 80 --block status --expect-head 3f9c2a1 --body-file "$WORK/gate.md")"
+printf '> 🙋 Review → Approve · Closes #66 · head `c5359ed`\n' > "$WORK/gate2.md"
+run --pr 80 --block status --expect-head 3f9c2a1 --body-file "$WORK/gate2.md" >/dev/null
+is "no new link when the edit keeps it" "" "$(cat "$WORK/err")"
+printf 'Refs #66\n' > "$WORK/links.md"
+printf '> 🙋 Review → Approve · head `c5359ed`\n' > "$WORK/gate3.md"
+run --pr 80 --block status --expect-head 3f9c2a1 --body-file "$WORK/gate3.md" >/dev/null
+run --pr 80 --block links --expect-head 3f9c2a1 --body-file "$WORK/links.md" >/dev/null
+hasnt "a links rewrite changes links on purpose" "$(cat "$BODY")" "Closes #66"
+has   "the deliberate link stands"               "$(cat "$BODY")" "Refs #66"
+
 echo "── usage"
 RC=0; run --pr 7 --block status --body-file "$WORK/risk.md" >/dev/null || RC=$?; is "expect-head required" 64 "$RC"
 RC=0; run --pr 7 --block nope --expect-head x --body-file "$WORK/risk.md" >/dev/null || RC=$?; is "block is an enum" 64 "$RC"

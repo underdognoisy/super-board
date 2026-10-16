@@ -10,8 +10,12 @@
 #   super-board-pr-body.sh --skeleton          # empty body with every marker, in order
 #   super-board-pr-body.sh --time [--config <cfg.json>]   # "Oct 2, 10:02 EDT" in config timezone
 #
-# Blocks, in body order: redcheck status problem solution ac history visual risk.
+# Blocks, in body order: links redcheck status problem solution ac history visual risk.
 # A block that is missing is inserted at its place in that order.
+#
+# `links` holds the PR's issue links (`Closes #N`). Any edit that would drop a
+# closing reference the body had puts it back there (stderr says so); only a
+# `--block links --body-file` rewrite changes the links on purpose.
 #
 # --body-file    replaces the block's content.
 # --append-file  appends lines inside the block (history rows).
@@ -26,7 +30,7 @@
 #        6 PR head moved · 64 usage · 66 unreadable file · 70 gh failure
 set -uo pipefail
 
-BLOCKS="redcheck status problem solution ac history visual risk"
+BLOCKS="links redcheck status problem solution ac history visual risk"
 die() { echo "pr-body: $1" >&2; exit "$2"; }
 
 PR=""; BLOCK=""; HEAD=""; BODY_FILE=""; APPEND_FILE=""; REPO=""; DRY=0; MODE="edit"; CONFIG=""
@@ -93,12 +97,20 @@ printf '%s' "$META" | jq -r '.body // ""' > "$OLD_TMP"
 
 MODE_FLAG=replace; [ -n "$APPEND_FILE" ] && MODE_FLAG=append
 python3 - "$OLD_TMP" "$SRC" "$BLOCK" "$MODE_FLAG" "$BLOCKS" > "$NEW_TMP" <<'PY' || die "could not splice the block" 70
-import sys
+import re, sys
 old_path, src_path, block, mode, order = sys.argv[1:6]
 order = order.split()
 body = open(old_path, encoding="utf-8").read()
 content = open(src_path, encoding="utf-8").read().strip("\n")
-open_m, close_m = f"<!-- sb:{block} -->", f"<!-- /sb:{block} -->"
+
+# The approval gate reads the PR's issue links from this body (`Closes #N`;
+# GitHub keeps no closing refs for a non-default base). Same pattern as
+# super-board-approval.py CLOSES.
+CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+"
+                    r"(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#(\d+)", re.I)
+
+def refs(text):
+    return {(r + "#" if r else "#") + n for r, n in CLOSES.findall(text)}
 
 def find(name, text):
     o, c = f"<!-- sb:{name} -->", f"<!-- /sb:{name} -->"
@@ -108,41 +120,45 @@ def find(name, text):
     j = text.find(c, i)
     return None if j < 0 else (i, j + len(c))
 
-span = find(block, body)
-if span:
-    inner = body[span[0] + len(open_m):span[1] - len(close_m)].strip("\n")
-    if mode == "append":
-        lines = inner.split("\n") if inner else []
-        new_lines = [l for l in content.split("\n")]
-        # Idempotent append: a row already present is not added twice.
-        for l in new_lines:
-            if l.strip() and l in lines:
-                continue
-            lines.append(l)
-        inner = "\n".join(lines).strip("\n")
-    else:
-        inner = content
-    out = body[:span[0]] + f"{open_m}\n{inner}\n{close_m}" + body[span[1]:]
-else:
+def put(body, block, content, mode):
+    open_m, close_m = f"<!-- sb:{block} -->", f"<!-- /sb:{block} -->"
+    span = find(block, body)
+    if span:
+        inner = body[span[0] + len(open_m):span[1] - len(close_m)].strip("\n")
+        if mode == "append":
+            lines = inner.split("\n") if inner else []
+            # Idempotent append: a row already present is not added twice.
+            for l in content.split("\n"):
+                if l.strip() and l in lines:
+                    continue
+                lines.append(l)
+            inner = "\n".join(lines).strip("\n")
+        else:
+            inner = content
+        return body[:span[0]] + f"{open_m}\n{inner}\n{close_m}" + body[span[1]:]
     new_block = f"{open_m}\n{content}\n{close_m}"
     idx = order.index(block)
     # Insert before the first later block that exists; else after the last earlier one; else at the end.
-    pos = None
     for later in order[idx + 1:]:
         s = find(later, body)
         if s:
-            pos = s[0]
-            out = body[:pos] + new_block + "\n\n" + body[pos:]
-            break
-    if pos is None:
-        for earlier in reversed(order[:idx]):
-            s = find(earlier, body)
-            if s:
-                pos = s[1]
-                out = body[:pos] + "\n\n" + new_block + body[pos:]
-                break
-    if pos is None:
-        out = (body.rstrip("\n") + "\n\n" if body.strip() else "") + new_block + "\n"
+            return body[:s[0]] + new_block + "\n\n" + body[s[0]:]
+    for earlier in reversed(order[:idx]):
+        s = find(earlier, body)
+        if s:
+            return body[:s[1]] + "\n\n" + new_block + body[s[1]:]
+    return (body.rstrip("\n") + "\n\n" if body.strip() else "") + new_block + "\n"
+
+out = put(body, block, content, mode)
+# An edit never silently drops an issue link: a `done` on an unlinked issue can
+# never approve (#66, 2026-10-16 — a status rewrite lost `Closes #66` and six
+# approvals were ignored). Lost links move to the `links` block. Rewriting the
+# `links` block itself is the deliberate way to change them.
+if not (block == "links" and mode == "replace"):
+    lost = sorted(refs(body) - refs(out))
+    if lost:
+        out = put(out, "links", "\n".join(f"Closes {r}" for r in lost), "append")
+        print(f"pr-body: kept {', '.join(lost)} this edit dropped (sb:links)", file=sys.stderr)
 sys.stdout.write(out)
 PY
 

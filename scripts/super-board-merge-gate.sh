@@ -49,7 +49,11 @@
 # Usage:
 #   super-board-merge-gate.sh --config <config.json> --pr <number>
 #                             [--expect-head <sha>] [--subject <title>] [--body-file <md>]
-#                             [--lock-timeout 1800] [--stale-after 5400] [--dry-run]
+#                             [--issue <card>] [--lock-timeout 1800] [--stale-after 5400] [--dry-run]
+#
+# `--issue` is the card the 🙋 request will be posted on. Before printing a
+# request (exits 7/8) the gate proves the PR closes that issue; without the
+# flag it proves the PR closes at least one. See exit 9.
 #
 # `--expect-head` is the PR head commit the Reviewer actually reviewed and
 # tested (its `headRefOid` when review passed). The gate pins everything to one
@@ -89,6 +93,11 @@
 #      and scope (super-board-approval.py validate()); the head pin is unchanged.
 #   79 required GitHub evidence unavailable: local run halt; preserve card and
 #      approval state, stop dispatch, and explicitly restart after diagnosis.
+#   9  unlinked — a human merges this one, but the PR does not close the card's
+#      issue, so a `done` there could never approve it (approval.py check():
+#      "request issue is not linked to this PR"). No request is printed. Add
+#      `Closes #<card>` with `super-board-pr-body.sh --block links` and rerun
+#      the gate once. #66 on 2026-10-16 collected six ignored `done`s this way.
 #   8  🙋 needs you — the PR has migrations for a database the robot may not
 #      touch (merge_policy → migrations.allowed_envs), an allowed migrate command
 #      failed, or a human-only step is declared (`needs-you:` line in the PR body,
@@ -117,7 +126,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
-CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""
+CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; ISSUE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -125,6 +134,7 @@ while [ $# -gt 0 ]; do
     --expect-head)   EXPECT_HEAD="$2"; shift 2 ;;
     --subject)       SUBJECT="$2"; shift 2 ;;
     --body-file)     MSG_FILE="$2"; shift 2 ;;
+    --issue)         ISSUE="$2"; shift 2 ;;
     --lock-timeout)  LOCK_TIMEOUT="$2"; shift 2 ;;
     --stale-after)   STALE_AFTER="$2"; shift 2 ;;
     --dry-run)       DRY=1; shift ;;
@@ -133,6 +143,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
 [ -n "$PR" ] || { echo "--pr <number> is required" >&2; exit 64; }
+[ -z "$ISSUE" ] || [[ "$ISSUE" =~ ^[0-9]+$ ]] || { echo "--issue must be an issue number" >&2; exit 64; }
 [ -z "$MSG_FILE" ] || [ -r "$MSG_FILE" ] || { echo "--body-file not readable: $MSG_FILE" >&2; exit 66; }
 # A lock is presumed abandoned only well past the point a caller stops waiting,
 # so a slow-but-alive merge is never stolen from. The floor matters as much as
@@ -248,7 +259,25 @@ approval_check() {
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
+# A request on an issue the PR does not close can never be approved: refuse to
+# print one (exit 9) rather than collect `done`s that check() will ignore.
+link_guard() {
+  local links
+  links=$(python3 "$HERE/super-board-approval.py" --links --repo "$REPO" --pr "$PR") || {
+    python3 "$GITHUB_READ" --check || exit $?
+    say "could not read the PR's issue links — no request posted"; exit 9; }
+  if [ -n "$ISSUE" ]; then
+    echo "$links" | jq -e --argjson n "$ISSUE" '.issues | index($n) != null' >/dev/null && return 0
+    echo "unlinked: PR #$PR does not close #$ISSUE — a done there can never approve it"
+  else
+    [ "$(echo "$links" | jq '.issues | length')" -gt 0 ] && return 0
+    echo "unlinked: PR #$PR closes no issue — a done can never approve it"
+  fi
+  say "add Closes #<card> (super-board-pr-body.sh --block links), then rerun the gate — no request posted"
+  exit 9
+}
 approval_request() {
+  link_guard
   python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
     --head "$HEAD_SHA" --plan "$PLAN"
 }

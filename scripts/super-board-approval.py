@@ -468,6 +468,7 @@ def enrich_entry(entry, github):
     entry["staleDone"] = None
     entry["approvedVia"] = None
     entry["drag"] = None
+    entry["unverifiable"] = None
     if not entry.get("needsYou") or github is None:
         return
     try:
@@ -497,6 +498,11 @@ def enrich_entry(entry, github):
                                  "record": result.get("record")}
         entry["approvalRefresh"] = result.get("headChanged", False)
         entry["approvalWhy"] = result["why"]
+        if result.get("unlinked"):
+            # No `done` on this issue can ever approve: the PR does not close
+            # it (#66, 2026-10-16: six `done`s ignored after a status rewrite
+            # dropped `Closes #66`). Planner → `unverifiable`; never re-ask.
+            entry["unverifiable"] = result["why"]
         request_time = timestamp(latest.get("created_at"))
         change = changes_request(comments, request_time, github.permission)
         if change is not None:
@@ -686,7 +692,8 @@ class GitHub:
     def check(self, number, head=None, scope=None, issue=None, drag=False):
         current_head, issues = self.pr(number)
         if issue is not None and issue not in issues:
-            return {"approved": False, "why": "request issue is not linked to this PR"}
+            return {"approved": False, "unlinked": True,
+                    "why": "request issue is not linked to this PR"}
         if head is not None and current_head != head:
             return {"approved": False, "headChanged": True, "why": "PR head changed after review"}
         comments = []
@@ -714,11 +721,22 @@ def main():
     ap.add_argument("--request", action="store_true", help="print a pinned request; no network or writes")
     ap.add_argument("--deps", action="store_true", help="enrich the dependency graph on stdin")
     ap.add_argument("--project", help="owner/number of the board; enables the drag-to-Done route in --deps")
+    ap.add_argument("--links", action="store_true", help="print the PR head and the issues it closes")
     args = ap.parse_args()
     if args.request:
         if not args.pr or not args.head or not SHA.fullmatch(args.head) or not args.plan:
             ap.error("request requires --pr, full --head and --plan")
         print(marker(request_for(args.repo, args.pr, args.head, scope_for(json.loads(args.plan)))))
+        return
+    if args.links:
+        if not args.pr:
+            ap.error("links requires --pr")
+        try:
+            head, issues = GitHub(args.repo).pr(args.pr)
+        except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
+            print(json.dumps({"error": str(error)}))
+            sys.exit(1)
+        print(json.dumps({"head": head, "issues": sorted(issues)}))
         return
     if args.deps:
         graph = json.load(sys.stdin)
