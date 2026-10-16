@@ -366,6 +366,42 @@ def test_classified_bounce_frees_gate():
     print("test_classified_bounce_frees_gate: PASS (orchestrator + reviewer bounces free 🙋 hold; reply/merged/old/untrusted/🧑 do not)")
 
 
+def test_unlinked_request_is_unverifiable():
+    # 2026-10-16 #66: a status rewrite dropped `Closes #66`, check() refused
+    # every `done` as "not linked", and the board kept asking for another.
+    # The real check() must mark the entry unverifiable so the planner reports
+    # the cause instead of re-asking; a linked PR approves the same `done`.
+    done = c("john", "done", when="21:55:00", cid=120)
+
+    class Unlinked(approval.GitHub):
+        def __init__(self):
+            self.repo, self.project = REPO, None
+
+        def pr(self, number):
+            return HEAD, set()
+
+        def comments(self, number):
+            return [dict(x, source=number) for x in (gate_comment(), done)] if number == 6 else []
+
+        def permission(self, login):
+            return perm(login)
+
+    entry = entry6()
+    approval.enrich_entry(entry, Unlinked())
+    assert entry["needsYouDone"] is False, "an unlinked request never approves"
+    assert entry["unverifiable"] == "request issue is not linked to this PR", entry
+    assert entry["staleDone"] is None
+
+    class Linked(Unlinked):
+        def pr(self, number):
+            return HEAD, {6}
+
+    entry = entry6()
+    approval.enrich_entry(entry, Linked())
+    assert entry["unverifiable"] is None and entry["needsYouDone"] is True, entry
+    print("test_unlinked_request_is_unverifiable: PASS (unlinked → unverifiable; linked done approves)")
+
+
 if __name__ == "__main__":
     test_classify()
     test_changes_per_line()
@@ -377,3 +413,4 @@ if __name__ == "__main__":
     test_approval_vocab()
     test_stale_done_notice()
     test_classified_bounce_frees_gate()
+    test_unlinked_request_is_unverifiable()

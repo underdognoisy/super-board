@@ -93,6 +93,42 @@ def ready_after_drag():
     assert picked == [74], f"only the dragged person-gated card runs, got {picked}"
     assert [s["number"] for s in plan["sweep"]] == [], plan["sweep"]
     print("ok: #74 dragged to Ready runs; #82 (open blocker), #83 (unknown), #76 (Blocked) stay")
+    unverifiable_approval()
+
+
+def unverifiable_approval():
+    """An Approve card whose PR does not close its issue is reported, not re-asked (#66).
+
+    Its trusted `done`s can never approve, so it must land in `unverifiable` with
+    the reason and never in `staleDone` (whose notice asks for `done` again).
+    """
+    unlinked = dep(66, [], [])
+    unlinked.update(humanGated=True, runnable=False, needsYou=True,
+                    unverifiable="request issue is not linked to this PR",
+                    staleDone={"by": "john", "id": 9, "at": "2026-10-16T13:06:10Z"})
+    waiting = dep(67, [], [])
+    waiting.update(humanGated=True, runnable=False, needsYou=True,
+                   staleDone={"by": "john", "id": 10, "at": "2026-10-16T13:06:10Z"})
+    items = {"items": [item(66, "Approve", ["qa"]), item(67, "Approve", ["qa"])]}
+    deps = {"66": unlinked, "67": waiting}
+    config = {"project": {"owner": "o", "number": 1}, "repo": {"remote": "https://github.com/o/r"},
+              "max_workers": 0}
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {}
+        for name, data in (("items", items), ("deps", deps), ("config", config)):
+            paths[name] = Path(tmp) / f"{name}.json"
+            paths[name].write_text(json.dumps(data))
+        env = dict(os.environ, SB_GITHUB_HALT_FILE=str(Path(tmp) / "halt.json"))
+        proc = subprocess.run(["bash", str(PLAN), "--config", str(paths["config"]),
+                               "--items", str(paths["items"]), "--deps", str(paths["deps"])],
+                              capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    plan = json.loads(proc.stdout)
+    assert plan.get("unverifiable") == [{"number": 66, "title": "card 66",
+                                         "why": "request issue is not linked to this PR"}], plan
+    assert [s["number"] for s in plan["staleDone"]] == [67], "an unlinked card never gets a re-ask notice"
+    assert [c["number"] for c in plan["cards"]] == []
+    print("ok: unlinked #66 reported in unverifiable, kept out of staleDone; #67 still gets its notice")
 
 
 if __name__ == "__main__":

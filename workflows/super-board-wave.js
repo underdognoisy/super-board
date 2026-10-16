@@ -125,6 +125,8 @@ const REVIEW_MEMORY = [
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
   `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): move the card to Approve (NOT Blocked) with the 🙋 request quoting its human-gate lines, label needs-you. No checkboxes: the request says "Drag this card to **Done** on the board, or comment \`done\` here, to approve and merge — or \`changes: <what>\` to send it back."`,
   `Exit 8 = 🙋 needs you (migration for a DB the robot may not touch, failed migrate, declared human step): move the card to Approve with the 🙋 request, exact commands from its needs-you lines, label needs-you. Exit 3 = GitHub refused: Blocked, label blocked:github.`,
+  // #66 (2026-10-16): a request on an issue the PR does not close collected six ignored done's.
+  `Always pass --issue <card> to the gate. Exit 9 = unlinked: the PR does not close the card's issue, no request was printed; write \`Closes #<card>\` with super-board-pr-body.sh --block links --expect-head <sha> and re-run the gate once; a second 9 → Blocked, label blocked:github.`,
   `Return status=human-gate with column=Approve for exits 7 and 8.`,
 ]
 

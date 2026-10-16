@@ -337,7 +337,7 @@ two complete builds. In order, no shortcuts:
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    keeps a person on every merge — the gate returns exit 7 below):
    record `gh pr view <PR> --json headRefOid` when review passes, then
-   `super-board-merge-gate.sh --config <cfg> --pr <PR> --expect-head <sha> --subject "<PR title>"
+   `super-board-merge-gate.sh --config <cfg> --pr <PR> --expect-head <sha> --issue <card> --subject "<PR title>"
    --body-file <msg.md>` (it merges with `--match-head-commit`; the message is the PR title plus the
    commit bullets and `Closes #N` — writing-standard.md § 1). Exit 6 = the head moved after review → your evidence is void;
    leave the card in **Review** with a `[reviewer]` comment naming both shas.
@@ -366,6 +366,11 @@ two complete builds. In order, no shortcuts:
      issue — ``[reviewer] [report] ⚠️ your `done` at <time> came before this request — comment `done` again to approve``,
      last line `stale-done: <comment id>` (the planner's `staleDone` list; skip if a
      `stale-done:` line already names it).
+   - **Exit 9 — unlinked.** A human merges this one, but the PR does not close the card's
+     issue, so no `done` there could ever approve it; the gate printed no request. Write
+     `Closes #<card>` with `super-board-pr-body.sh --block links --expect-head <sha>` and re-run
+     the gate once; a second 9 → **Blocked** `blocked:github`. Never post a 🙋 request on an
+     issue the PR does not close.
    - **Exit 3 — GitHub refused.** Card → **Blocked** with the §4 template, label `blocked:github`.
    - The rule in one line: the robot migrates the databases it was allowed to test its
      work; live databases, money, auth and destructive schema changes wait for a person.

@@ -487,7 +487,7 @@ on the base branch**.
    reviewed when review passes, and hand it to the gate:
      HEAD=$(gh pr view <N> --json headRefOid -q .headRefOid)   # at the moment review passes
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
-       --subject "<PR title>" --body-file <msg.md>
+       --issue <card> --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
    The gate takes the merge mutex, checks the PR head is still $HEAD, merges the CURRENT
    base into a scratch worktree at $HEAD, runs `config.verify_commands`, and only then
@@ -524,7 +524,14 @@ on the base branch**.
           verifies their permission and the head before resuming Review. For exits
           7 and 8, copy the gate's `approval-request:` line into the canonical issue
           block; link it from the PR without duplicating the request.
-   → do NOT leave a card in Review on exit 2, 3, 5, 7 or 8. A card left in Review is
+     9 → unlinked: a human merges this one, but the PR does not close #<card>, so no
+          `done` on the card could ever approve it (stdout: `unlinked: …`; no request
+          printed). Put the link back — write `Closes #<card>` with
+          `super-board-pr-body.sh --block links --expect-head "$HEAD"` — and re-run the
+          gate once. A second 9 → Blocked with the §4 template, label `blocked:github`.
+          A partial PR that must say `Refs #<card>` cannot take the `done` route: Block it
+          `blocked:decision` and say so. (#66, 2026-10-16: six `done`s ignored.)
+   → do NOT leave a card in Review on exit 2, 3, 5, 7, 8 or 9. A card left in Review is
      re-picked next tick and re-reviewed forever, which is the re-dispatch waste
      tracked in issue #10. Exits 4 and 6 are the exceptions: 4 simply queued, and
      6 needs a fresh review of a commit nobody has reviewed yet.

@@ -170,9 +170,9 @@ Repeat until a done condition or halt gate fires:
 2. **Plan the wave** —
    `bash .claude/bin/super-board-wave-plan.sh --config <config-path>` →
    The planner returns `cards`, `sweep`, `release`, `unlabelled`, `resume`, `dragRefused`, `changes`,
-   `classify`, `refreshApproval`, `staleDone`, `flag` and `stranded`. **Act on every list but `cards`
+   `classify`, `refreshApproval`, `staleDone`, `unverifiable`, `flag` and `stranded`. **Act on every list but `cards`
    BEFORE launching** (run.md → "The wave-start sweep"). The approval lists (`resume`, `changes`,
-   `classify`, `refreshApproval`, `staleDone`) read the **`Approve`** column, any 🙋 card a human
+   `classify`, `refreshApproval`, `staleDone`, `unverifiable`) read the **`Approve`** column, any 🙋 card a human
    **dragged to `Done`** whose issue is still open (v3.3.0), plus any 🙋 card left in `Blocked` from
    before v3.2.0 (`needs-you` label or 🙋 tag) — treat those exactly like an Approve card. Move every swept card to `Ready`, drop its `removeLabels` (the `blocked:*`
    reason), with a comment naming what cleared it. For every `release` card (a `waits-on` Ready
@@ -197,6 +197,18 @@ Repeat until a done condition or halt gate fires:
    **`dragRefused` cards** — dragged to Done, PR still open, but NOT a valid approval (`why`
    says which rule failed): move them back to `Approve` and comment once
    `[orchestrator] [report] ⚠️ drag to Done not taken as approval · <why>`. Never merge them.
+
+   **`unverifiable` cards — no `done` can approve the request as it stands.** Its `why` is the
+   approval check's refusal (today: `request issue is not linked to this PR` — the PR body lost
+   its `Closes #<card>`). **Never ask the human for `done` on such a card**: report the `why`
+   once, in the wave report and as `[orchestrator] [report] ⚠️ approval cannot register ·
+   <why>` on the issue. Restoring the link is a PR-body edit, not a code change: write
+   `Closes #<card>` with `super-board-pr-body.sh --block links --expect-head <request head>`.
+   Do it when the human confirms the PR closes the card; a PR that should only say
+   `Refs #<card>` is a decision for them. Every `done` already posted after the request then
+   registers on the next plan — no new request, no new `done`. (#66, 2026-10-16: six `done`s
+   were ignored while the board kept asking for another.) The planner keeps these cards out
+   of `staleDone`.
 
    **`staleDone` cards — a trusted human's `done` came BEFORE the current pinned request.** It is
    never approval (validate() accepts only a token after the request) and the card stays in

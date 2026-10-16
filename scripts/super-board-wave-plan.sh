@@ -58,7 +58,8 @@
 #
 # THE APPROVE COLUMN (v3.2.0). A card that passed review and waits on a human
 # merge decision (merge gate exit 7 / 8) sits in `Approve`, not Blocked. The
-# approval routes — resume, changes, classify, refreshApproval, staleDone — read
+# approval routes — resume, changes, classify, refreshApproval, staleDone,
+# unverifiable — read
 # Approve cards, plus (backward compatibility) a Blocked card the graph marks
 # `needsYou` (the 🙋 tag or the `needs-you` label) gated before Approve existed.
 # The column only says WHERE to look: approval itself is still the head-bound,
@@ -110,6 +111,7 @@
 #     "classify": [ {"number":54,"title":"…","comments":[{"by":"<login>","id":1,"at":"…","body":"…"}]} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
 #     "staleDone": [ {"number":55,"title":"…","by":"<login>","id":9,"at":"…"} ],
+#     "unverifiable": [ {"number":66,"title":"…","why":"request issue is not linked to this PR"} ],
 #     "release": [ {"number":56,"title":"…","clearedBy":[32]} ],
 #     "unlabelled": [ {"number":57,"title":"…"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
@@ -313,11 +315,21 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                          | select(dep(.number).approvalRefresh // false)
                          | { number, title, why: dep(.number).approvalWhy } ],
 
+      # A human-merge card whose `done` can never approve as it stands: the PR
+      # does not close the card issue. The orchestrator reports the reason and
+      # restores the link; it never asks for `done` again (#66, 2026-10-16: six
+      # `done`s ignored while the board kept asking for a seventh).
+      unverifiable: [ $all[]
+                      | select(awaiting)
+                      | select((dep(.number).unverifiable // null) != null)
+                      | { number, title, why: dep(.number).unverifiable } ],
+
       # A trusted `done` posted BEFORE the current pinned request. Never an
       # approval; the orchestrator tells the human once (machine line
       # `stale-done: <id>` dedups the notice).
       staleDone: [ $all[]
                    | select(awaiting)
+                   | select((dep(.number).unverifiable // null) == null)
                    | select((dep(.number).staleDone // null) != null)
                    | { number, title, by: dep(.number).staleDone.by,
                        id: dep(.number).staleDone.id, at: dep(.number).staleDone.at } ],
