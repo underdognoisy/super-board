@@ -318,6 +318,31 @@ def test_classified_bounce_frees_gate():
     approval.enrich_entry(entry, StubGitHub([gate, note, reply]))
     assert entry["humanGated"] is True, "a discussion ack must leave the gate standing"
 
+    # 2026-10-15 #70: the REVIEWER sent an approved head back for a rebase. Every
+    # bounce header seen on the board frees the hold the same way.
+    for cid, header in ((116, "[reviewer] [report] 🔁 rebase pass · round 3 · PR #87"),
+                        (117, "[reviewer] [report] ❌ bounced · round 2 · PR #87"),
+                        (118, "[reviewer] [report] ↩️ moved back · round 2 · PR #87")):
+        lane = c("john", header + "\nNext: builder", when="21:56:00", cid=cid)
+        entry = entry6()
+        approval.enrich_entry(entry, StubGitHub([gate, lane], approved=True))
+        assert entry["humanGated"] is False and entry["needsYouDone"] is False, \
+            f"{header!r} must kill the request and free the 🙋 hold, got {entry}"
+
+    # Ordinary reports after the request are not bounces.
+    for cid, header in ((119, "[orchestrator] [report] ▶️ approval verified · back to Review"),
+                        (120, "[reviewer] [report] ✅ merged · round 3 · PR #87")):
+        entry = entry6()
+        approval.enrich_entry(entry, StubGitHub([gate, c("john", header, when="21:56:00", cid=cid)]))
+        assert entry["humanGated"] is True, f"{header!r} must leave the gate standing"
+
+    # "bounced" deep in a body (quoted, not the header) is not a bounce report.
+    quoted = c("john", "[reviewer] [report] ✅ merged · round 4\nprior round bounced on R1",
+               when="21:56:00", cid=121)
+    entry = entry6()
+    approval.enrich_entry(entry, StubGitHub([gate, quoted]))
+    assert entry["humanGated"] is True, "only the header line decides a bounce"
+
     # A 🔁 report from before the current request is history, not a bounce.
     old = c("john", "[orchestrator] [report] 🔁 changes requested by john\nclassified: 110",
             when="21:40:00", cid=113)
@@ -338,7 +363,7 @@ def test_classified_bounce_frees_gate():
     entry = entry6()
     approval.enrich_entry(entry, StubGitHub([gate, ruling, note, bounce]))
     assert entry["humanGated"] is True, "a 🧑 gate stays until a person moves it"
-    print("test_classified_bounce_frees_gate: PASS (🔁 ack frees 🙋 hold; reply/old/untrusted/🧑 do not)")
+    print("test_classified_bounce_frees_gate: PASS (orchestrator + reviewer bounces free 🙋 hold; reply/merged/old/untrusted/🧑 do not)")
 
 
 if __name__ == "__main__":

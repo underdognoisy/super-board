@@ -175,33 +175,21 @@ def changes_request(comments, request_time, permission):
     return newest
 
 
-# The orchestrator's report for a classify-route `changes` bounce (run-workflow.md).
-BOUNCE_REPORT = re.compile(r"\s*\[orchestrator\]\s*\[report\]\s*🔁")
+# A board report that sends the card back for rework: its header line carries
+# 🔁 (orchestrator relay, rebase pass), ↩️ (moved back) or "bounced" (reviewer).
+BOUNCE_REPORT = re.compile(r"\s*\[[A-Za-z][\w-]*\]\s*\[report\]\s*[^\n]*(?:🔁|↩️|\bbounced\b)", re.I)
 
 
-def classified_bounce(comments, request_time, permission):
-    """True when the orchestrator bounced this card on a CLASSIFIED change request
-    after the pinned request: a trusted `[orchestrator] [report] 🔁` comment whose
-    `classified:` line names a trusted human free-text comment, both after the
-    request. That kills the request the same way an explicit `changes:` does, so
-    the bounced card is runnable instead of parked behind a dead 🙋 gate. Like
-    `changes:` it can only bounce — it never approves anything.
+def bounced_after_request(comments, request_time, permission):
+    """True when a trusted board report bounced this card AFTER the pinned request:
+    the orchestrator relaying a classified change request (#67), or a lane sending
+    an approved head back for a rebase (#70, 2026-10-15). Either way the request
+    is dead — the rebuilt head needs a fresh one — so the 🙋 approval hold must not
+    park the card. Like `changes:` it can only bounce; it never approves anything.
     """
-    human = set()
     for comment in comments:
         body = comment.get("body") or ""
-        author = comment.get("user") or {}
-        try:
-            after = timestamp(comment.get("created_at")) > request_time
-        except (ValueError, TypeError):
-            continue
-        if (after and comment.get("id") and not MACHINE.match(body)
-                and author.get("type") == "User" and author.get("login")
-                and permission(author["login"]) in ("write", "maintain", "admin")):
-            human.add(comment["id"])
-    for comment in comments:
-        body = comment.get("body") or ""
-        if not BOUNCE_REPORT.match(body):
+        if not BOUNCE_REPORT.match(body.split("\n", 1)[0]):
             continue
         try:
             if timestamp(comment.get("created_at")) <= request_time:
@@ -209,12 +197,9 @@ def classified_bounce(comments, request_time, permission):
         except (ValueError, TypeError):
             continue
         author = comment.get("user") or {}
-        if not (author.get("type") in ("User", "Bot") and author.get("login")
+        if (author.get("type") in ("User", "Bot") and author.get("login")
                 and permission(author["login"]) in ("write", "maintain", "admin")):
-            continue
-        for hit in ACK.findall(author_text(body)):
-            if human & {int(x) for x in re.split(r"[ \t]*,[ \t]*", hit)}:
-                return True
+            return True
     return False
 
 
@@ -529,12 +514,12 @@ def enrich_entry(entry, github):
                 entry["humanGated"] = False
                 entry["runnable"] = (bool(entry.get("parseable"))
                                      and len(entry.get("openBlockers") or []) == 0)
-        elif classified_bounce(comments, request_time, github.permission):
-            # The orchestrator already bounced on a classified change request:
-            # same effect as `changes:` — the request is dead, the 🙋 approval
-            # hold (only that one) no longer gates the rebuild.
+        elif bounced_after_request(comments, request_time, github.permission):
+            # A board report already bounced the card after the request: same
+            # effect as `changes:` — the request is dead, the 🙋 approval hold
+            # (only that one) no longer gates the rebuild.
             entry["needsYouDone"] = False
-            entry["approvalWhy"] = "bounced on a classified change request; fresh request after rebuild"
+            entry["approvalWhy"] = "bounced after the request; fresh request after rebuild"
             if entry.get("humanGated") and approval_hold(comments, blocks):
                 entry["humanGated"] = False
                 entry["runnable"] = (bool(entry.get("parseable"))
