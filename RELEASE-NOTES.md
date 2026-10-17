@@ -1,5 +1,35 @@
 # Release notes
 
+## Unreleased — fixes from the 2026-10-15/16 pri-628 demo run
+
+Bugs found while draining a real board. Each fix has a test that reproduces the failure. Branch
+`fix/demo-run-board-bugs`; not yet versioned.
+
+- 🐛 **A `gh` usage error no longer halts the run.** A command-line rejection (for example `--slurp`
+  with `--jq`) fails that one call with exit 64 on the first try. Strict scripts still halt, and real
+  outages still retry three times and then halt.
+- 🐛 **The sweep leaves person-blocked cards alone.** A card frees only when it has a non-empty list of
+  issue blockers and all of them closed. `blocked:decision` and `blocked:needs-access` cards with no
+  issue blockers stay in Blocked.
+- 🐛 **A bounce after the request cancels the 🙋 hold.** Any trusted `🔁` / `↩️` / bounced report from
+  any role, posted after the request, frees the card for the rebuild and keeps an early `done` from
+  resuming it. Merged and approval-verified reports, quoted text, earlier and untrusted reports do not.
+- 🐛 **Dragging a person-gated card to Ready runs it.** The planner reads the Ready column as the person
+  clearing a `blocked-by: -` gate. Open issue blockers still hold the card.
+- 📝 **An unfixed nit carries instead of bouncing.** A `not fixed` `[nit]` stays an open,
+  non-blocking row and rides to the human request. Every other `not fixed` finding still bounces.
+- 🐛 **An edit can no longer drop a PR's issue link.** `super-board-pr-body.sh` has a `links` block.
+  When an edit removes a `Closes #N` the body had, the script puts it back in that block and says so on
+  stderr. Only a rewrite of the `links` block itself changes links on purpose.
+- 🐛 **The gate refuses a request that could never be approved.** `super-board-merge-gate.sh` takes
+  `--issue <card>` and checks, before printing a 🙋 request, that the PR closes that issue (or any issue
+  without `--issue`). If not, it exits 9 with `unlinked: …`. The reviewer restores the link and reruns
+  once; a second exit 9 goes to Blocked with `blocked:github`.
+- 🐛 **The planner reports an unapprovable request instead of re-asking.** A new `unverifiable` list
+  holds Approve cards whose PR does not close their issue, with the reason. The orchestrator reports it
+  once and never asks for `done` on those cards; they are left out of `staleDone`. On #66 the old
+  behavior asked for `done` six times while every approval was ignored as "not linked to this PR".
+
 ## v3.3.0 — 2026-10-12
 
 Drag a 🙋 card from **Approve** to **Done** to approve it. A GitHub Project card cannot carry a
