@@ -40,7 +40,9 @@ use the lane launcher's sandbox settings, including an external submodule git di
 
 ## Required GitHub evidence and a paused run
 
-Required reads use `.claude/bin/super-board-github-read.py --kind <shape> -- <gh args>`.
+Required reads use the main checkout's `.claude/bin/super-board-github-read.py --kind <shape> -- <gh args>`;
+the wave prompt names it through the shared git dir, because a card worktree's copy is the
+base branch's and can predate the run's (2026-11-04: a stale copy halted the run on a `--slurp --jq` read).
 Three total attempts means the first attempt plus two retries of that same read;
 unrelated successful calls do not reset its failures. Invalid GraphQL queries,
 authentication, and permission errors stop immediately. Do not retry mutations.

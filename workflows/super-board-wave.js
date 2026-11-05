@@ -40,12 +40,19 @@ if (input.tier && !['low', 'medium', 'high'].includes(input.tier)) {
 }
 
 let halted = false
+// Lanes work in worktrees cut from the board base, whose committed .claude/bin
+// can predate the main checkout's: on 2026-11-04 a lane ran staging's pre-fix
+// copy by relative path and a --slurp --jq read halted the run. Always name the
+// main checkout's helper, found through the git dir every worktree shares.
+const READ_HELPER = `"$(git rev-parse --path-format=absolute --git-common-dir)/../.claude/bin/super-board-github-read.py"`
 // Valid form per --kind, from validate() in scripts/super-board-github-read.py (#32).
 const READ_SHAPES = [
-  `Read shapes (helper: .claude/bin/super-board-github-read.py --kind <kind> -- <gh args>):`,
+  `Read shapes (helper: ${READ_HELPER} --kind <kind> -- <gh args>):`,
+  `Run that exact helper path from any worktree; never your worktree's own .claude/bin copy.`,
   `- issue title+body: --kind issue -- issue view <N> --json number,title,body`,
   `- issue comments: --kind comments -- api repos/{owner}/{repo}/issues/<N>/comments --paginate --slurp (zero comments = [[]])`,
-  `- other JSON, incl. maybe-empty lists: --kind json -- <gh args> (no --jq that prints a plain string)`,
+  `- PR review comments: --kind comments -- api repos/{owner}/{repo}/pulls/<N>/comments --paginate --slurp (filter the output yourself)`,
+  `- other JSON, incl. maybe-empty lists: --kind json -- <gh args> (never --slurp with --jq: gh rejects it; no --jq that prints a plain string)`,
   `- PR branch+head: --kind head -- pr view <N> --json headRefName,headRefOid --jq '"\\(.headRefName) \\(.headRefOid)"'`,
   `- PR body+head: --kind body -- pr view <N> --json body,headRefOid`,
   `- PR metadata: --kind metadata -- pr view <N> --json files,labels,body,additions,deletions,changedFiles`,
@@ -53,7 +60,7 @@ const READ_SHAPES = [
   `- issue labels (waits-on, needs-you, blocked:<reason>): --kind json -- issue view <N> --json labels`,
   `A read whose output misses its shape exits 64 for that call only and prints the valid form: fix the read, do not halt.`,
 ].join('\n')
-const READ_FAILURE = READ_SHAPES + '\n' + `Required GitHub reads use .claude/bin/super-board-github-read.py: three total attempts, exit 79 means run halted. Check --check before any GitHub write, migration, or merge. On exit 79 preserve worktree/card/approval/claims, make no more GitHub calls, and report status=halted (preflight verdict=halted). Never retry a mutation. Config: ${input.configPath}.`
+const READ_FAILURE = READ_SHAPES + '\n' + `Required GitHub reads use ${READ_HELPER}: three total attempts, exit 79 means run halted. Check --check before any GitHub write, migration, or merge. On exit 79 preserve worktree/card/approval/claims, make no more GitHub calls, and report status=halted (preflight verdict=halted). Never retry a mutation. Config: ${input.configPath}.`
 
 const CLASSIFY_SCHEMA = {
   type: 'object',

@@ -37,7 +37,7 @@ class GitHubErrors(ValueError):
 FORMS = {
     'issue': 'issue view <N> --json number,title,body',
     'comments': 'api repos/{owner}/{repo}/issues/<N>/comments --paginate --slurp',
-    'json': '<gh args> (JSON output; no --jq that prints a plain string)',
+    'json': '<gh args> (JSON output; never --slurp with --jq, filter after; no --jq that prints a plain string)',
     'head': 'pr view <N> --json headRefName,headRefOid --jq \'"\\(.headRefName) \\(.headRefOid)"\'',
     'body': 'pr view <N> --json body,headRefOid',
     'metadata': 'pr view <N> --json files,labels,body,additions,deletions,changedFiles',

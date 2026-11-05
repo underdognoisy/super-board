@@ -8,6 +8,11 @@ Bugs found while draining a real board. Each fix has a test that reproduces the 
 - 🐛 **A `gh` usage error no longer halts the run.** A command-line rejection (for example `--slurp`
   with `--jq`) fails that one call with exit 64 on the first try. Strict scripts still halt, and real
   outages still retry three times and then halt.
+- 🐛 **Lanes run the main checkout's read helper, not their worktree's copy.** A card worktree is cut
+  from the board base, and its committed `.claude/bin` can predate the run's. On 2026-11-04 a lane ran
+  staging's pre-fix helper by relative path, so a `--slurp --jq` read halted the run anyway. The wave
+  and Codex lane prompts now name the main checkout's helper, and the `json` form says never to pair
+  `--slurp` with `--jq`. Branch `fix/lane-reads-run-helper`.
 - 🐛 **The sweep leaves person-blocked cards alone.** A card frees only when it has a non-empty list of
   issue blockers and all of them closed. `blocked:decision` and `blocked:needs-access` cards with no
   issue blockers stay in Blocked.

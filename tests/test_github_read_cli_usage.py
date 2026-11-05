@@ -50,6 +50,8 @@ def main():
         assert n == 1, f"expected one attempt, got {n}"
         assert not halted, "usage error must not write the halt file"
         assert "the run continues" in proc.stderr, proc.stderr
+        # The valid form steers the agent off the combination it just used.
+        assert "never --slurp with --jq" in proc.stderr, proc.stderr
 
         proc, n, halted = run(tmp, "unknown flag: --bogus")
         assert proc.returncode == 64 and n == 1 and not halted, (proc.returncode, n, halted)
