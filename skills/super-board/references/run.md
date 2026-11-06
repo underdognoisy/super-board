@@ -6,9 +6,12 @@
 
 ## Required GitHub reads can pause a run
 
-Use the main checkout's `.claude/bin/super-board-github-read.py` for required API evidence
-(from a worktree: `"$(git rev-parse --path-format=absolute --git-common-dir)/../.claude/bin/super-board-github-read.py"`;
-the worktree's own copy is the base branch's and can predate the run's). It retries
+**Every `.claude/` path in this file means the main checkout's copy.** A lane's worktree is cut
+from the base branch, and its committed `.claude/` (bin, skills, config) can predate the run's. From
+a worktree, prefix each path with `MAIN="$(git rev-parse --path-format=absolute --git-common-dir)/.."`;
+never run or read the worktree's copy (2026-11-04: a stale read helper halted the run).
+
+Use `.claude/bin/super-board-github-read.py` for required API evidence. It retries
 one failed read at most twice (three total attempts); invalid queries or missing
 authority halt immediately. Exit **79** means stop dispatch and pause the current
 run. Never substitute an empty board, OPEN issue, full quota, or empty diff.

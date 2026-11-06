@@ -85,6 +85,11 @@ except subprocess.CalledProcessError:
     fail('Codex lane must start inside the target git repository')
 os.chdir(root)
 helper = script_path.with_name('super-board-github-read.py')
+# A worktree's committed .claude/ is the base branch's copy and can predate this
+# run's (2026-11-04: a stale read helper halted the run), so the prompt names
+# every pack path absolutely: scripts beside this one, skills in the main checkout.
+bin_dir = script_path.parent
+skills = common_dir.parent / '.claude/skills'
 column = card['status']
 def result(status, detail):
     print(json.dumps({'status': status, 'column': column, 'detail': detail}))
@@ -98,10 +103,11 @@ section = {'build': 'Builder', 'qa': 'Tester', 'review': 'Reviewer'}[args.lane]
 prompt = f'''Run {skill} for issue #{card['number']} as a Codex lane worker.
 Config: {config_path}
 Card: {json.dumps(card)}
-Read .claude/skills/{skill}/SKILL.md and .claude/skills/super-board/references/run.md → {section} lifecycle; follow all its board, branch, worktree, comments, test and merge requirements.
-Source .claude/bin/super-board-gh-guard.sh and use its quota checks. Required GitHub reads go through {helper} (this exact path, never your worktree's .claude/bin copy, which can predate it); a read that misses its --kind shape exits 64 for that call only and prints the valid form, so fix the read. Check --check before new writes, migrations and merges; exit 79 means status=halted, no more GitHub calls, preserve claims/worktree/card/approval. Never retry a mutation.
-Use .claude/bin/super-board-card.sh for board reads/moves and .claude/bin/super-board-pr-body.sh for owned PR blocks; follow writing-standard.md and pr-author-notes.md.
-Use your own worktree under .claude/worktrees/; never edit the main checkout. Clean up on ordinary exit, preserve work on halt/interruption.
+Read {skills}/{skill}/SKILL.md and {skills}/super-board/references/run.md → {section} lifecycle; follow all its board, branch, worktree, comments, test and merge requirements.
+Every pack script and skill named here is the main checkout's copy at the absolute path given; never run or read your worktree's copy, which is the base branch's and can predate this run.
+Source {bin_dir}/super-board-gh-guard.sh and use its quota checks. Required GitHub reads go through {helper}; a read that misses its --kind shape exits 64 for that call only and prints the valid form, so fix the read. Check --check before new writes, migrations and merges; exit 79 means status=halted, no more GitHub calls, preserve claims/worktree/card/approval. Never retry a mutation.
+Use {bin_dir}/super-board-card.sh --config {config_path} for board reads/moves and {bin_dir}/super-board-pr-body.sh for owned PR blocks; follow writing-standard.md and pr-author-notes.md.
+Use your own worktree under {root}/.claude/worktrees/; never edit the main checkout. Clean up on ordinary exit, preserve work on halt/interruption.
 Codex adaptation: do not launch Claude or other sub-agents. Perform preflight, classification, independent review and truth-check duties inline. This changes the execution host, never the evidence requirements, confidence threshold or merge policy.
 Return JSON: status=advanced|bounced|blocked|human-gate|failed|halted; column=current board column; detail=one line; prUrl/branch when known, otherwise null; priorFindings=review counts or null. A non-advanced exit ends this card's lane chain.
 '''
@@ -111,9 +117,9 @@ if args.lane == 'build':
 elif args.lane == 'qa' and card['status'] == 'Ready':
     prompt += 'This qa-labelled Ready card skips Building: move Ready → QA and create the issue branch from the base; test the existing product per run.md qa cards.\n'
 elif args.lane == 'review':
-    prompt += '''The owner explicitly chose run --codex: you may review and own the merge. First load the latest <!-- super-review:report -->; grade prior R-ids fixed/not fixed/no longer applies, bounce any not fixed and edit the same report in place. Form hypotheses from the issue AC and diff before reading the Builder narrative.
+    prompt += f'''The owner explicitly chose run --codex: you may review and own the merge. First load the latest <!-- super-review:report -->; grade prior R-ids fixed/not fixed/no longer applies, bounce any not fixed and edit the same report in place. Form hypotheses from the issue AC and diff before reading the Builder narrative.
 Rerun the Tester's tests. When truth_gate triggers, apply super-review's fixed Adversarial mode brief inline in two distinct passes (code-grounder and historian); collect evidence and aggregate confidence against truth_threshold. Over-engineering is Should fix, never Blocker alone and never lowers confidence. Missing evidence fails closed.
-Merge ONLY through the unchanged .claude/bin/super-board-merge-gate.sh, pinning the exact head you reviewed at review pass using --expect-head "$HEAD" --config <config> --pr <N> --subject <title> --body-file <msg.md>. Never run bare gh pr merge or bypass the gate. Follow run.md Merge protocol and route every gate exit exactly: 2/5 rebase pass, 3 Blocked with label blocked:github, 4 stay Review, 6 fresh review, 7/8 human gate: move the card to Approve (never Blocked) with the pinned approval-request, label needs-you, no checkboxes, status=human-gate column=Approve. Respect human_approves_merge and merge_policy. Confirm MERGED <sha>, fetch base and prove merge-base --is-ancestor <sha> origin/<base> before closing issue or moving Done.
+Merge ONLY through the unchanged {bin_dir}/super-board-merge-gate.sh, pinning the exact head you reviewed at review pass using --expect-head "$HEAD" --config <config> --pr <N> --subject <title> --body-file <msg.md>. Never run bare gh pr merge or bypass the gate. Follow run.md Merge protocol and route every gate exit exactly: 2/5 rebase pass, 3 Blocked with label blocked:github, 4 stay Review, 6 fresh review, 7/8 human gate: move the card to Approve (never Blocked) with the pinned approval-request, label needs-you, no checkboxes, status=human-gate column=Approve. Respect human_approves_merge and merge_policy. Confirm MERGED <sha>, fetch base and prove merge-base --is-ancestor <sha> origin/<base> before closing issue or moving Done.
 '''
 
 counts = {key: {'type': 'integer'} for key in ['fixed', 'notFixed', 'noLongerApplies']}

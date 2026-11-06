@@ -40,15 +40,19 @@ if (input.tier && !['low', 'medium', 'high'].includes(input.tier)) {
 }
 
 let halted = false
-// Lanes work in worktrees cut from the board base, whose committed .claude/bin
-// can predate the main checkout's: on 2026-11-04 a lane ran staging's pre-fix
-// copy by relative path and a --slurp --jq read halted the run. Always name the
-// main checkout's helper, found through the git dir every worktree shares.
-const READ_HELPER = `"$(git rev-parse --path-format=absolute --git-common-dir)/../.claude/bin/super-board-github-read.py"`
+// Lanes work in worktrees cut from the board base, whose committed .claude/
+// (bin, skills, config) can predate the main checkout's: on 2026-11-04 a lane ran
+// staging's pre-fix read helper by relative path and a --slurp --jq read halted
+// the run. Every pack path a lane runs names the main checkout's copy, found
+// through the git dir every worktree shares.
+const MAIN = `"$(git rev-parse --path-format=absolute --git-common-dir)/.."`
+const inMain = (path) => `"$(git rev-parse --path-format=absolute --git-common-dir)/../${path}"`
+const CONFIG = input.configPath.startsWith('/') ? input.configPath : inMain(input.configPath)
+const READ_HELPER = inMain('.claude/bin/super-board-github-read.py')
+const MAIN_RULE = `MAIN = ${MAIN}, the main checkout. Every .claude/ path this prompt or its references name (bin scripts, skills, references, config) means MAIN's copy: run and read it there, never your worktree's copy, which is the base branch's and can predate this run. The commands below already resolve MAIN from any directory.`
 // Valid form per --kind, from validate() in scripts/super-board-github-read.py (#32).
 const READ_SHAPES = [
   `Read shapes (helper: ${READ_HELPER} --kind <kind> -- <gh args>):`,
-  `Run that exact helper path from any worktree; never your worktree's own .claude/bin copy.`,
   `- issue title+body: --kind issue -- issue view <N> --json number,title,body`,
   `- issue comments: --kind comments -- api repos/{owner}/{repo}/issues/<N>/comments --paginate --slurp (zero comments = [[]])`,
   `- PR review comments: --kind comments -- api repos/{owner}/{repo}/pulls/<N>/comments --paginate --slurp (filter the output yourself)`,
@@ -60,7 +64,7 @@ const READ_SHAPES = [
   `- issue labels (waits-on, needs-you, blocked:<reason>): --kind json -- issue view <N> --json labels`,
   `A read whose output misses its shape exits 64 for that call only and prints the valid form: fix the read, do not halt.`,
 ].join('\n')
-const READ_FAILURE = READ_SHAPES + '\n' + `Required GitHub reads use ${READ_HELPER}: three total attempts, exit 79 means run halted. Check --check before any GitHub write, migration, or merge. On exit 79 preserve worktree/card/approval/claims, make no more GitHub calls, and report status=halted (preflight verdict=halted). Never retry a mutation. Config: ${input.configPath}.`
+const READ_FAILURE = MAIN_RULE + '\n' + READ_SHAPES + '\n' + `Required GitHub reads use ${READ_HELPER}: three total attempts, exit 79 means run halted. Check --check before any GitHub write, migration, or merge. On exit 79 preserve worktree/card/approval/claims, make no more GitHub calls, and report status=halted (preflight verdict=halted). Never retry a mutation. Config: ${CONFIG}.`
 
 const CLASSIFY_SCHEMA = {
   type: 'object',
@@ -142,8 +146,8 @@ const REVIEW_MEMORY = [
 // finding a card with `gh project item-list` (~203 points on a 131-card board)
 // and its Status options with `gh project field-list` (101) before each move.
 const BOARD_IO = () =>
-  `Board moves and reads: .claude/bin/super-board-card.sh --config ${input.configPath} move <issue> <Status> ` +
-  `(1 GraphQL point) · status <issue> · items. Comments, labels, PR reads: REST per .claude/skills/super-board/references/rate-limit-etiquette.md → "Price list". Read GitHub once per decision, never in a sleep loop.`
+  `Board moves and reads: ${inMain('.claude/bin/super-board-card.sh')} --config ${CONFIG} move <issue> <Status> ` +
+  `(1 GraphQL point) · status <issue> · items. Comments, labels, PR reads: REST per MAIN/.claude/skills/super-board/references/rate-limit-etiquette.md → "Price list". Read GitHub once per decision, never in a sleep loop.`
 
 // The Workflow harness relays the session's triggering message to every agent with
 // override authority. A long launch message once hijacked the Classify agent (it
@@ -156,11 +160,11 @@ const lanePrompt = (lane, card) => [
   PROMPT_GUARD,
   READ_FAILURE,
   `Run ${LANE[lane].skill} on issue #${card.number} ("${card.title}") for a super-board workflow wave.`,
-  `Read .claude/skills/super-board/references/run.md → "${LANE[lane].section}" lifecycle and follow it EXACTLY:`,
+  `Read MAIN/.claude/skills/super-board/references/run.md → "${LANE[lane].section}" lifecycle and follow it EXACTLY:`,
   `create your own worktree under .claude/worktrees/, work on the issue branch, post the required PR/issue comments,`,
-  `move the project card yourself, clean up the worktree on exit. Config: ${input.configPath}.`,
+  `move the project card yourself, clean up the worktree on exit. Config: ${CONFIG}.`,
   BOARD_IO(),
-  `Commits, PR title, PR body blocks, comments: .claude/skills/super-board/references/writing-standard.md. Rewrite only your own PR body blocks, with .claude/bin/super-board-pr-body.sh.`,
+  `Commits, PR title, PR body blocks, comments: MAIN/.claude/skills/super-board/references/writing-standard.md. Rewrite only your own PR body blocks, with ${inMain('.claude/bin/super-board-pr-body.sh')}.`,
   ...(lane === 'review' ? REVIEW_MEMORY : []),
   ...(lane === 'qa' && card.status === 'Ready'
     ? [`This card is labelled qa: it skips Building. Move it Ready → QA yourself, create the issue branch from the base branch, and test what is already there (run.md → "qa cards").`]
@@ -247,10 +251,10 @@ const preflightModel = (input.tier || 'medium') === 'low' ? 'haiku' : 'sonnet'
 const preflightPrompt = (batch) => [
   PROMPT_GUARD,
   READ_FAILURE,
-  `Builder pre-flight for issues ${batch.map((c) => `#${c.number} ("${c.title}")`).join(', ')}. Config: ${input.configPath}.`,
-  `Read .claude/skills/super-board/references/run.md → "Builder pre-flight" and follow it EXACTLY. You write no code.`,
+  `Builder pre-flight for issues ${batch.map((c) => `#${c.number} ("${c.title}")`).join(', ')}. Config: ${CONFIG}.`,
+  `Read MAIN/.claude/skills/super-board/references/run.md → "Builder pre-flight" and follow it EXACTLY. You write no code.`,
   `Other cards in this wave: ${JSON.stringify(input.cards.map(({ number, status, title }) => ({ number, status, title })))}`,
-  `Run .claude/bin/super-board-preflight.sh once for the whole batch, then judge its candidates semantically.`,
+  `Run ${inMain('.claude/bin/super-board-preflight.sh')} once for the whole batch, then judge its candidates semantically.`,
   `hold → post the Block template (block-template.md), move the card to Blocked yourself and add its ONE blocked:<reason> label.`,
   `sequence behind an issue → the card STAYS in Ready: add label waits-on and comment "[builder] [report] ⏳ waits on #<N> · <overlapping PR and files>" ending with the machine line "blocked-by: <N>". Return column Ready and blockedBy [<N>]. Never move it to Blocked.`,
   `Two Ready cards overlapping each other with no open PR: the lower-numbered one proceeds; sequence only the other, blockedBy [the lower]. Never both.`,

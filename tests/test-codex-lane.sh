@@ -62,6 +62,14 @@ lane review --codex >"$T/out"
 jq -e '.status == "advanced" and .column == "Done"' "$T/out" >/dev/null || fail 'explicit review allowed'
 grep -q -- '--expect-head' "$SB_CODEX_TEST_LOG" || fail 'review must pin reviewed head to merge gate'
 grep -q 'Never run bare gh pr merge' "$SB_CODEX_TEST_LOG" || fail 'review must keep merge protocol'
+# A worktree's .claude/ is the base branch's copy and can predate the run's (2026-11-04 halt):
+# every pack path in the prompt must be absolute, never a bare relative .claude/bin or .claude/skills.
+tail -1 "$SB_CODEX_TEST_LOG" | jq -r .prompt | grep -nE '(^|[^/A-Za-z0-9_.-])\.claude/(bin|skills)/' \
+  && fail 'codex lane prompt names a relative .claude/ path a worktree would resolve to its stale copy'
+tail -1 "$SB_CODEX_TEST_LOG" | jq -r .prompt | grep -nE '\{(bin_dir|skills|helper|root|config_path)\}' \
+  && fail 'codex lane prompt ships an unrendered path placeholder'
+tail -1 "$SB_CODEX_TEST_LOG" | jq -r .prompt | grep -qE "through the unchanged $KIT/scripts/super-board-merge-gate.sh" \
+  || fail 'review prompt must name the merge gate beside the lane script'
 [ "$(last_model)" = default ] || fail 'no model uses Codex default'
 lane build --codex=flag-model >"$T/out"
 [ "$(last_model)" = flag-model ] || fail 'flag model must reach -m'

@@ -56,7 +56,7 @@ git -C "$repo" commit -qam 'fix: usage errors exit 64'
 git -C "$repo" worktree add -q "$repo/.claude/worktrees/issue-97" -b issue-97 staging
 
 # The read command exactly as the wave prompt tells a build lane to run it.
-cmd="$(node - "$wave" <<'JS'
+cat > "$tmp/prompts.js" <<'JS'
 const fs = require('fs')
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^export const meta/m, 'const meta')
 const AsyncFunction = (async () => {}).constructor
@@ -76,12 +76,20 @@ new AsyncFunction('args', 'agent', 'pipeline', 'log', src)(
   { configPath: 'c.json', cards: [{ number: 97, status: 'Ready', title: 't' }] }, agent, pipeline, () => {})
   .then(() => {
     const p = prompts['build:#97'] || (console.error('build lane did not run'), process.exit(1))
+    // Every command a lane runs from its worktree must name the main checkout's copy:
+    // no bare relative .claude/bin path, and the config read from the main checkout.
+    for (const [label, text] of Object.entries(prompts)) {
+      const bare = text.match(/(^|[^/A-Za-z0-9_.-])\.claude\/bin\/\S+/m)
+      if (bare) { console.error(`${label} prompt runs a relative ${bare[0].trim()}`); process.exit(1) }
+      if (/--config c\.json/.test(text)) { console.error(`${label} prompt passes the relative config`); process.exit(1) }
+      if (label !== 'classify:#97' && !/^MAIN = .*means MAIN.s copy/m.test(text)) { console.error(`${label} prompt lacks the main-checkout rule`); process.exit(1) }
+    }
     const m = p.match(/Read shapes \(helper: (.+?) --kind <kind>/)
     if (!m) { console.error('build prompt names no read helper command'); process.exit(1) }
     process.stdout.write(m[1])
   })
 JS
-)"
+cmd="$(node "$tmp/prompts.js" "$wave")"
 
 # Run it from inside the card worktree, the way a lane does.
 set +e
